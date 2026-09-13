@@ -52,6 +52,14 @@ service cloud.firestore {
       allow create: if isSchoolUser()
         && request.resource.data.authorId == request.auth.uid
         && (
+          request.resource.data.imageDataUrl == null
+          || (
+            request.resource.data.imageDataUrl is string
+            && request.resource.data.imageDataUrl.size() <= 450000
+            && request.resource.data.imageDataUrl.matches('data:image/jpeg;base64,.*')
+          )
+        )
+        && (
           (request.resource.data.kind == "lost"
             && request.resource.data.status == "seeking"
             && request.resource.data.isPublished == true)

@@ -28,7 +28,7 @@
 - `도움 됐어요`, 교사 인수 확인 및 관리자 지급 취소 시연
 - Firebase Google 로그인 기반 코드
 - Firestore 물건 등록과 공개 목록 실시간 조회 기반
-- 사진 업로드·카메라 촬영·미리보기·자동 축소 및 Storage 연결 코드
+- 사진 업로드·카메라 촬영·미리보기·자동 축소 및 Firestore 저장
 - 로그인 계정 역할에 따른 학생·교사·최종 관리자 메뉴 구분
 
 Firebase 프로젝트 `school-findit`에는 서울 리전 Firestore 데이터베이스가
@@ -41,7 +41,7 @@ Firebase 프로젝트 `school-findit`에는 서울 리전 Firestore 데이터베
 
 아직 실제 운영 기능으로 연결되지 않은 항목도 있습니다.
 
-- Storage 버킷 생성과 사진 업로드 보안 규칙 배포
+- 이용량 증가 시 사진을 전용 객체 저장소로 이전
 - 찾기 단서 작성·수정·삭제
 - 교사 인증코드와 역할 변경
 - 교사의 습득물 인수·반환 처리
@@ -59,7 +59,7 @@ Firebase 프로젝트 `school-findit`에는 서울 리전 Firestore 데이터베
 - Shadcn 계열 UI 컴포넌트
 - Firebase Authentication
 - Cloud Firestore
-- Firebase Storage 예정
+- Cloud Firestore 압축 사진 저장(소규모 시험 운영용)
 - pnpm
 
 ## 로컬 실행
@@ -84,7 +84,7 @@ corepack pnpm dev
 2. Firebase 콘솔의 웹 앱 설정값을 입력합니다.
 3. 임시 허용 계정 또는 학교 Google Workspace 도메인을 설정합니다.
 4. Authentication에서 Google 로그인 제공자를 활성화합니다.
-5. Firestore 및 Storage 보안 규칙을 배포합니다.
+5. Firestore 보안 규칙을 배포합니다.
 
 필요한 환경변수:
 
@@ -108,9 +108,10 @@ Firestore 규칙과 인덱스를 배포하려면 다음 명령을 사용합니�
 corepack pnpm firebase deploy --only firestore:rules,firestore:indexes
 ```
 
-사진 저장은 Firebase Storage를 사용합니다. 신규 프로젝트에서 Storage를
-사용하려면 Blaze 요금제와 결제 계정 연결이 필요할 수 있으므로 실제 운영 전
-예산 알림과 사용량을 설정해야 합니다.
+현재 사진은 결제수단 없이 시험할 수 있도록 브라우저에서 긴 변 1,000px 이하의
+JPEG로 축소하고 Firestore 물건 문서에 저장합니다. 이미지 문자열은 450,000자
+이하로 제한합니다. 이용량이 늘면 목록 읽기 비용과 속도에 불리하므로 전용 객체
+저장소로 이전해야 합니다.
 
 ## Vercel 배포
 

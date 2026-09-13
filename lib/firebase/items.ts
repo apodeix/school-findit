@@ -11,13 +11,6 @@ import {
   type QueryDocumentSnapshot,
   type Unsubscribe,
 } from "firebase/firestore";
-import {
-  deleteObject,
-  getDownloadURL,
-  ref,
-  uploadBytes,
-  type FirebaseStorage,
-} from "firebase/storage";
 
 const statusLabels: Record<string, string> = {
   seeking: "찾는 중",
@@ -52,7 +45,7 @@ type CreateItemInput = {
   location: string;
   description: string;
   authorId: string;
-  image?: File | null;
+  imageDataUrl?: string;
 };
 
 function toStoredItem(snapshot: QueryDocumentSnapshot<DocumentData>): StoredItem {
@@ -69,7 +62,11 @@ function toStoredItem(snapshot: QueryDocumentSnapshot<DocumentData>): StoredItem
     tone: data.kind === "found" ? "blue" : "violet",
     clueCount: Number(data.clueCount ?? 0),
     description: String(data.description ?? "상세 설명이 없습니다."),
-    imageUrl: typeof data.imageUrl === "string" ? data.imageUrl : undefined,
+    imageUrl: typeof data.imageDataUrl === "string"
+      ? data.imageDataUrl
+      : typeof data.imageUrl === "string"
+        ? data.imageUrl
+        : undefined,
   };
 }
 
@@ -97,45 +94,26 @@ export function subscribeToPublishedItems(
 
 export async function createItem(
   db: Firestore,
-  storage: FirebaseStorage,
   input: CreateItemInput,
 ) {
   const isLost = input.kind === "lost";
   const itemRef = doc(collection(db, "items"));
-  const photoRef = input.image
-    ? ref(storage, `item-images/${input.authorId}/${itemRef.id}/main.jpg`)
-    : null;
-
-  let imageUrl: string | undefined;
-  if (photoRef && input.image) {
-    await uploadBytes(photoRef, input.image, {
-      contentType: input.image.type,
-      customMetadata: { itemId: itemRef.id, ownerId: input.authorId },
-    });
-    imageUrl = await getDownloadURL(photoRef);
-  }
-
-  try {
-    await setDoc(itemRef, {
-      kind: input.kind,
-      title: input.title.trim(),
-      category: "기타",
-      color: "",
-      location: input.location.trim(),
-      dateText: "오늘",
-      description: input.description.trim(),
-      authorId: input.authorId,
-      status: isLost ? "seeking" : "pending_handoff",
-      isPublished: isLost,
-      clueCount: 0,
-      imageUrl: imageUrl ?? null,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    if (photoRef) await deleteObject(photoRef).catch(() => undefined);
-    throw error;
-  }
+  await setDoc(itemRef, {
+    kind: input.kind,
+    title: input.title.trim(),
+    category: "기타",
+    color: "",
+    location: input.location.trim(),
+    dateText: "오늘",
+    description: input.description.trim(),
+    authorId: input.authorId,
+    status: isLost ? "seeking" : "pending_handoff",
+    isPublished: isLost,
+    clueCount: 0,
+    imageDataUrl: input.imageDataUrl ?? null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
 
   return itemRef;
 }

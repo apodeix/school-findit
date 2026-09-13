@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element -- Firestore data URLs are already compressed client-side. */
+
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
   Award, Bell, Camera, Check, ChevronRight, CircleUserRound, Clock3, Eye, Gift, Home,
@@ -108,7 +110,6 @@ export default function LostFoundApp() {
   const [handoffOpen,setHandoffOpen] = useState(false);
   const [adminOpen,setAdminOpen] = useState(false);
   const [pendingHandoffs,setPendingHandoffs] = useState(initialPendingHandoffs);
-  const [photo,setPhoto] = useState<File|null>(null);
   const [photoPreview,setPhotoPreview] = useState("");
   const [photoBusy,setPhotoBusy] = useState(false);
   const [registerBusy,setRegisterBusy] = useState(false);
@@ -163,12 +164,6 @@ export default function LostFoundApp() {
       unsubscribeAuth();
     };
   }, []);
-
-  useEffect(() => {
-    return () => {
-      if (photoPreview) URL.revokeObjectURL(photoPreview);
-    };
-  }, [photoPreview]);
 
   const filtered = useMemo(() => {
     const needle=query.trim().toLowerCase();
@@ -247,8 +242,7 @@ export default function LostFoundApp() {
     setPhotoBusy(true);
     try {
       const preparedPhoto = await prepareItemImage(selectedPhoto);
-      setPhoto(preparedPhoto);
-      setPhotoPreview(URL.createObjectURL(preparedPhoto));
+      setPhotoPreview(preparedPhoto);
     } catch (error) {
       flash(error instanceof Error ? error.message : "사진을 불러오지 못했습니다.");
     } finally {
@@ -257,7 +251,6 @@ export default function LostFoundApp() {
   }
 
   function clearPhoto() {
-    setPhoto(null);
     setPhotoPreview("");
   }
 
@@ -279,18 +272,16 @@ export default function LostFoundApp() {
       }
       setRegisterBusy(true);
       try {
-        const { db, storage } = getFirebaseServices();
-        await createItem(db, storage, {
-          kind:newKind, title, location, description, authorId:authUser.uid, image:photo,
+        const { db } = getFirebaseServices();
+        await createItem(db, {
+          kind:newKind, title, location, description, authorId:authUser.uid,
+          imageDataUrl:photoPreview || undefined,
         });
         setRegisterOpen(false);
         clearPhoto();
         flash(newKind==="lost" ? "분실 신고가 저장되었습니다." : "습득물이 전달 대기로 저장되었습니다.");
-      } catch (error) {
-        const message = error instanceof Error && error.message.toLowerCase().includes("storage")
-          ? "사진을 업로드하지 못했습니다. Firebase Storage 설정을 확인해 주세요."
-          : "Firebase에 저장하지 못했습니다. 설정과 보안 규칙을 확인해 주세요.";
-        flash(message);
+      } catch {
+        flash("Firebase에 저장하지 못했습니다. 사진 용량이나 보안 규칙을 확인해 주세요.");
       } finally {
         setRegisterBusy(false);
       }
