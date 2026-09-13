@@ -1,4 +1,4 @@
-import LostFoundApp from "./lost-found-app";
+import LostFoundApp from "./findit-app";
 
 export default function Home() {
   return <LostFoundApp />;

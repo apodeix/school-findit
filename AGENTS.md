@@ -217,6 +217,19 @@ Material Design 3를 디자인 규칙으로 사용하되 Material Web 패키지�
 
 ## 현재 기술과 구현 상태
 
+### 2026-09-13 연결 작업 중간 기록
+
+- 운영 화면은 `app/findit-app.tsx`, 입력 폼은 `app/findit-forms.tsx`로 분리했다.
+- `api/app.ts` Vercel 서버가 Firebase 로그인 토큰, 실제 역할, 소유권과 중복 지급을 검증한다.
+- 실제 단서 CRUD·신고·숨김, 인수·반환·보관 장소, 포인트 거래·취소와 사건별 알림을 연결했다.
+- 시연 화면과 로그인 후 실제 데이터 화면은 분리한다. 로그인 후 예시 자료를 채우지 않는다.
+- Firebase Admin 비공개 키는 Vercel Production 시크릿에만 등록했다. 소스·대화에 노출하지 않는다.
+- `firestore.server.rules`는 데이터의 직접 읽기·쓰기를 차단한다. API 운영 확인 후 배포한다.
+- 학생과 교사 모두 하단 찾기에서 검색할 수 있고, 교사는 학생 기능에 업무 기능이 추가된다.
+- 입력·권한·중복 방지 단위 검사 8건과 실제 저장소 통합 검사 26건을 통과했다.
+- Windows Node 24 빌드는 산출 후 종료 assertion이 발생한다. Vercel 빌드와 API 실행을 별도 확인한다.
+- 인증코드 보강, 로그인 전 시연과 로고 수정은 이어서 작업한다. 학교 도메인 미확정으로 Gmail 시험 허용은 유지한다.
+
 현재 프로젝트는 Next.js/Vinext, React, TypeScript, Tailwind CSS,
 Shadcn 계열 컴포넌트와 Lucide 아이콘을 사용한다. pnpm을 유지한다.
 

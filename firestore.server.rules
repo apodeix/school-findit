@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function allowedAccount() {
+      let settings = get(/databases/$(database)/documents/app_settings/security).data;
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && (request.auth.token.email.matches(settings.allowedEmailPattern)
+          || (settings.get('allowGmailTesting', true) == true && request.auth.token.email.matches('.*@gmail.com')));
+    }
+    // This document contains only a revision timestamp, never user data.
+    // All data reads/writes go through the Vercel API and its verified identity.
+    match /app_settings/revision {
+      allow get: if allowedAccount();
+      allow list, write: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

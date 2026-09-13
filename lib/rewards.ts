@@ -25,6 +25,7 @@ export type RewardTransaction = {
   grantedBy: string;
   cancelledAt?: string;
   cancelledBy?: string;
+  cancellationReason?: string;
 };
 
 export type RewardBadge = {
