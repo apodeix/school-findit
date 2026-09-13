@@ -19,6 +19,12 @@ service cloud.firestore {
         );
     }
 
+    function isInitialAdmin() {
+      return isSchoolUser()
+        && get(/databases/$(database)/documents/app_settings/security).data.initialAdminEmail
+          == request.auth.token.email;
+    }
+
     match /app_settings/{document} {
       allow read, write: if false;
     }
@@ -27,9 +33,12 @@ service cloud.firestore {
       allow read: if isSchoolUser() && request.auth.uid == userId;
       allow create: if isSchoolUser()
         && request.auth.uid == userId
-        && request.resource.data.role == "student"
         && request.resource.data.active == true
-        && request.resource.data.email == request.auth.token.email;
+        && request.resource.data.email == request.auth.token.email
+        && (
+          (isInitialAdmin() && request.resource.data.role == "final_admin")
+          || (!isInitialAdmin() && request.resource.data.role == "student")
+        );
       allow update, delete: if false;
     }
 

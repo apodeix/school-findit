@@ -31,7 +31,7 @@ import {
   type ItemKind,
   type StoredItem,
 } from "@/lib/firebase/items";
-import { ensureStudentProfile } from "@/lib/firebase/users";
+import { ensureUserProfile } from "@/lib/firebase/users";
 import {
   REWARD_POINTS,
   cancelDemoReward,
@@ -135,7 +135,7 @@ export default function LostFoundApp() {
       }
 
       try {
-        await ensureStudentProfile(db, user);
+        await ensureUserProfile(db, user);
       } catch {
         flash("학교 사용자 정보를 준비하지 못했습니다. Firebase 설정을 확인해 주세요.");
         return;

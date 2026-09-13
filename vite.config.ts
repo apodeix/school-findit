@@ -36,6 +36,16 @@ const localBindingConfig = {
 };
 
 export default defineConfig(async () => {
+  const isVercel = Boolean(process.env.VERCEL);
+
+  if (isVercel) {
+    const { nitro } = await import("nitro/vite");
+    const { default: tailwindcss } = await import("@tailwindcss/vite");
+    return {
+      plugins: [tailwindcss(), vinext(), nitro()],
+    };
+  }
+
   // Use Miniflare's local Request.cf placeholder unless fetching is requested.
   process.env.CLOUDFLARE_CF_FETCH_ENABLED ??= "false";
   process.env.WRANGLER_SEND_METRICS ??= "false";
