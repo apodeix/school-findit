@@ -28,6 +28,7 @@ import {
   schoolEmailDomain,
 } from "@/lib/firebase/client";
 import {
+  confirmItemHandoff,
   createItem,
   subscribeToPublishedItems,
   type ItemKind,
@@ -65,6 +66,7 @@ type PendingHandoff = {
   studentId: string;
   location: string;
   received: boolean;
+  persisted?: boolean;
 };
 
 const initialItems: Item[] = [
@@ -119,6 +121,21 @@ export default function LostFoundApp() {
     () => getRewardSummary(rewards, demoUserId),
     [rewards],
   );
+  const visiblePendingHandoffs = useMemo<PendingHandoff[]>(() => {
+    if (!isFirebaseConfigured || (userRole!=="teacher"&&userRole!=="final_admin")) {
+      return pendingHandoffs;
+    }
+    return items
+      .filter(item => item.kind==="found" && item.status==="전달 대기")
+      .map(item => ({
+        id:item.id,
+        title:item.title,
+        studentId:item.authorId ?? "",
+        location:item.location,
+        received:false,
+        persisted:true,
+      }));
+  }, [items, pendingHandoffs, userRole]);
 
   useEffect(() => {
     if (!isFirebaseConfigured) return;
@@ -142,8 +159,9 @@ export default function LostFoundApp() {
         return;
       }
 
+      let role: UserRole;
       try {
-        const role = await ensureUserProfile(db, user);
+        role = await ensureUserProfile(db, user);
         setUserRole(role);
       } catch {
         await signOut(auth);
@@ -154,7 +172,8 @@ export default function LostFoundApp() {
       setAuthUser(user);
       unsubscribeItems = subscribeToPublishedItems(
         db,
-        setItems,
+        role==="teacher"||role==="final_admin",
+        rows => setItems(rows.map(item => ({ ...item, isMine:item.authorId===user.uid }))),
         () => flash("Firebase 목록을 불러오지 못했습니다. 보안 규칙을 확인해 주세요."),
       );
     });
@@ -211,7 +230,24 @@ export default function LostFoundApp() {
     flash(result.granted ? "단서 작성자에게 도움 포인트 1점을 지급했습니다." : "이 학생은 이 신고에서 이미 포인트를 받았습니다.");
   }
 
-  function confirmHandoff(handoff: PendingHandoff) {
+  async function confirmHandoff(handoff: PendingHandoff, storageLocation: string) {
+    if (handoff.persisted) {
+      if (!authUser || (userRole!=="teacher"&&userRole!=="final_admin")) {
+        flash("교사 또는 최종 관리자만 인수할 수 있습니다.");
+        return;
+      }
+      if (storageLocation.trim().length < 2) {
+        flash("보관 장소를 입력해 주세요.");
+        return;
+      }
+      try {
+        await confirmItemHandoff(getFirebaseServices().db, handoff.id, authUser.uid, storageLocation);
+        flash("교사 인수를 확인하고 공개 목록에 반영했습니다.");
+      } catch {
+        flash("인수 처리에 실패했습니다. 권한과 보관 장소를 확인해 주세요.");
+      }
+      return;
+    }
     const result = grantDemoReward(rewards, {
       userId: handoff.studentId,
       points: REWARD_POINTS.foundItemHandoff,
@@ -307,7 +343,7 @@ export default function LostFoundApp() {
     <div className="mx-auto grid max-w-[1440px] lg:grid-cols-[220px_minmax(0,1fr)_280px]">
       <aside className="sticky top-[72px] hidden h-[calc(100vh-72px)] border-r border-[#e0e2ef] px-5 py-7 lg:flex lg:flex-col">
         <nav className="space-y-1" aria-label="주요 메뉴"><SideLink icon={<Home/>} label="물건 찾기" active/><SideLink icon={<PenLine/>} label="내가 쓴 글"/><SideLink icon={<Lightbulb/>} label="내가 남긴 단서"/><SideLink icon={<Award/>} label="내 도움 포인트" count={`${rewardSummary.totalPoints}점`} onClick={()=>setProfileOpen(true)}/><SideLink icon={<Bell/>} label="알림" count="3" onClick={()=>setNoticeOpen(true)}/></nav>
-        {(userRole==="teacher"||userRole==="final_admin")&&<><div className="my-6 h-px bg-[#e2e4f0]"/><p className="mb-2 px-3 text-xs font-bold tracking-wide text-muted-foreground">교사 메뉴</p><nav className="space-y-1"><SideLink icon={<PackageCheck/>} label="인수 대기" count={`${pendingHandoffs.filter(item=>!item.received).length}`} onClick={()=>setHandoffOpen(true)}/>{userRole==="final_admin"&&<SideLink icon={<ShieldCheck/>} label="포인트 관리" onClick={()=>setAdminOpen(true)}/>}</nav></>}
+        {(userRole==="teacher"||userRole==="final_admin")&&<><div className="my-6 h-px bg-[#e2e4f0]"/><p className="mb-2 px-3 text-xs font-bold tracking-wide text-muted-foreground">교사 메뉴</p><nav className="space-y-1"><SideLink icon={<PackageCheck/>} label="인수 대기" count={`${visiblePendingHandoffs.filter(item=>!item.received).length}`} onClick={()=>setHandoffOpen(true)}/>{userRole==="final_admin"&&<SideLink icon={<ShieldCheck/>} label="포인트 관리" onClick={()=>setAdminOpen(true)}/>}</nav></>}
         {userRole&&<div className="mt-auto rounded-[24px] bg-[#eef0ff] p-4 text-[#303b91]"><div className="mb-2 flex items-center gap-2 text-sm font-bold"><ShieldCheck className="size-4"/>{userRole==="final_admin"?"최종 관리자":userRole==="teacher"?"교사 인증 완료":"학생 계정"}</div><p className="text-xs leading-relaxed text-[#5961a1]">{userRole==="student"?"분실 신고와 습득물 등록, 찾기 단서를 이용할 수 있습니다.":"습득물을 확인하고 보관 장소를 안내할 수 있습니다."}</p></div>}
       </aside>
 
@@ -328,7 +364,7 @@ export default function LostFoundApp() {
 
     <Dialog open={profileOpen} onOpenChange={setProfileOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[30px] border-[#e2d39c] sm:max-w-[620px]"><DialogHeader className="text-left"><DialogTitle className="flex items-center gap-2 text-2xl font-extrabold tracking-[-0.04em]"><Award className="size-6 text-[#d08a00]"/>내 도움 포인트</DialogTitle><DialogDescription>내 선행과 학교 공동체 기여를 모아 보여줍니다.</DialogDescription></DialogHeader><div className="rounded-[26px] bg-gradient-to-br from-[#ffe17c] to-[#fff4c1] p-6 text-[#5b4300]"><p className="text-sm font-bold">현재 도움 포인트</p><div className="mt-1 flex items-end gap-2"><strong className="text-4xl font-black tracking-[-0.05em]">{rewardSummary.totalPoints}</strong><span className="pb-1 font-bold">점</span></div><p className="mt-3 text-sm leading-6">순위를 매기지 않고, 확인된 도움만 차곡차곡 기록해요.</p></div><section><h3 className="mb-3 mt-6 font-extrabold">나의 배지</h3><div className="grid gap-3 sm:grid-cols-3">{rewardSummary.badges.map(badge=><RewardBadgeCard key={badge.id} badge={badge}/>)}</div></section><section><h3 className="mb-3 mt-6 font-extrabold">포인트 활동 내역</h3><div className="space-y-2">{rewards.filter(transaction=>transaction.userId===demoUserId).map(transaction=><div key={transaction.id} className="flex items-center gap-3 rounded-[18px] bg-[#f6f6fc] p-4"><span className={`grid size-10 shrink-0 place-items-center rounded-2xl ${transaction.status==="active"?"bg-[#fff0ad] text-[#8a6200]":"bg-[#e8e8ee] text-[#777986]"}`}><Gift className="size-5"/></span><div className="min-w-0 flex-1"><p className="text-sm font-extrabold">{rewardReasonLabel(transaction.reason)}</p><p className="mt-1 text-xs text-muted-foreground">{transaction.grantedAt} · {transaction.grantedBy}</p></div><span className={`font-black ${transaction.status==="active"?"text-[#b17300]":"text-[#8b8d98] line-through"}`}>+{transaction.points}점</span></div>)}</div></section><div className="rounded-[18px] border border-[#e4e5ef] px-4 py-3 text-xs leading-5 text-muted-foreground">포인트와 활동 내역은 본인, 담당 교사와 최종 관리자만 확인할 수 있습니다.</div></DialogContent></Dialog>
 
-    <Dialog open={handoffOpen} onOpenChange={setHandoffOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[30px] border-[#dfe2f1] sm:max-w-[620px]"><DialogHeader className="text-left"><DialogTitle className="flex items-center gap-2 text-2xl font-extrabold tracking-[-0.04em]"><PackageCheck className="size-6 text-[#4a56ba]"/>습득물 인수 대기</DialogTitle><DialogDescription>실제 물건을 전달받은 뒤에만 확인해 주세요. 현재는 시연 데이터입니다.</DialogDescription></DialogHeader><div className="space-y-3">{pendingHandoffs.map(handoff=><div key={handoff.id} className="rounded-[22px] border border-[#e1e3f0] bg-white p-4"><div className="flex flex-col gap-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><p className="font-extrabold">{handoff.title}</p><p className="mt-1 text-sm text-muted-foreground"><MapPin className="mr-1 inline size-4"/>{handoff.location}</p><p className="mt-2 text-xs text-muted-foreground">등록 학생의 이름과 이메일은 공개하지 않습니다.</p></div><Button disabled={handoff.received} onClick={()=>confirmHandoff(handoff)} className="rounded-full bg-[#4958c7] hover:bg-[#3847b5]"><Award className="size-4"/>{handoff.received?"인수·지급 완료":"인수 확인 및 3점 지급"}</Button></div></div>)}</div><div className="rounded-[18px] bg-[#fff7d6] px-4 py-3 text-xs leading-5 text-[#685524]">같은 습득물 인수에 포인트가 두 번 지급되지 않도록 고유 기록으로 확인합니다.</div></DialogContent></Dialog>
+    <Dialog open={handoffOpen} onOpenChange={setHandoffOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[30px] border-[#dfe2f1] sm:max-w-[620px]"><DialogHeader className="text-left"><DialogTitle className="flex items-center gap-2 text-2xl font-extrabold tracking-[-0.04em]"><PackageCheck className="size-6 text-[#4a56ba]"/>습득물 인수 대기</DialogTitle><DialogDescription>학생에게 실제 물건을 전달받은 뒤 보관 장소를 입력하고 인수해 주세요.</DialogDescription></DialogHeader><div className="space-y-3">{visiblePendingHandoffs.length>0?visiblePendingHandoffs.map(handoff=><HandoffCard key={handoff.id} handoff={handoff} onConfirm={confirmHandoff}/>):<div className="rounded-[22px] bg-[#f4f5fb] p-8 text-center text-sm text-muted-foreground">현재 인수를 기다리는 습득물이 없습니다.</div>}</div><div className="rounded-[18px] bg-[#fff7d6] px-4 py-3 text-xs leading-5 text-[#685524]">실제 등록 항목은 인수 후 공개 목록으로 이동합니다. 도움 포인트 영구 지급은 서버 검증 기능 연결 후 적용됩니다.</div></DialogContent></Dialog>
 
     <Dialog open={adminOpen} onOpenChange={setAdminOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[30px] border-[#dfe2f1] sm:max-w-[700px]"><DialogHeader className="text-left"><DialogTitle className="flex items-center gap-2 text-2xl font-extrabold tracking-[-0.04em]"><ShieldCheck className="size-6 text-[#4a56ba]"/>도움 포인트 관리</DialogTitle><DialogDescription>지급 사유와 연결 항목을 확인하고 잘못된 지급을 취소합니다. 현재는 시연 데이터입니다.</DialogDescription></DialogHeader><div className="space-y-3">{rewards.map(transaction=><div key={transaction.id} className={`rounded-[20px] border p-4 ${transaction.status==="cancelled"?"border-[#dedfe6] bg-[#f5f5f7]":"border-[#ead89b] bg-[#fffdf5]"}`}><div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-extrabold">{rewardReasonLabel(transaction.reason)} · +{transaction.points}점</p><Badge className={transaction.status==="active"?"border-0 bg-[#fff0ad] text-[#755400]":"border-0 bg-[#e2e2e7] text-[#666873]"}>{transaction.status==="active"?"지급됨":"취소됨"}</Badge></div><p className="mt-1 break-all text-xs text-muted-foreground">사용자 {transaction.userId} · 항목 {transaction.relatedItemId}{transaction.relatedClueId?` · 단서 ${transaction.relatedClueId}`:""}</p><p className="mt-1 text-xs text-muted-foreground">{transaction.grantedAt} · 처리: {transaction.grantedBy}{transaction.cancelledBy?` · 취소: ${transaction.cancelledBy}`:""}</p></div>{transaction.status==="active"&&<Button variant="outline" className="rounded-full border-[#d7a9a9] text-[#9a3e3e] hover:bg-[#fff0f0]" onClick={()=>cancelReward(transaction.id)}><RotateCcw className="size-4"/>지급 취소</Button>}</div></div>)}</div></DialogContent></Dialog>
 
@@ -362,6 +398,12 @@ function ItemCard({item,onClick}:{item:Item;onClick:()=>void}){return <button on
 function StatusBadge({item}:{item:Item}){return <Badge className={`border-0 px-2.5 py-1 ${item.kind==="lost"?"bg-[#eeeaff] text-[#5146a8]":"bg-[#daf4eb] text-[#17624c]"}`}>{item.status}</Badge>}
 function ClueCard({title,text,time}:{title:string;text:string;time:string}){return <button className="w-full rounded-[20px] border border-[#e1e3f0] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#bec3e5] hover:shadow-[0_8px_20px_rgba(40,45,90,.07)]"><div className="mb-2 flex items-center justify-between gap-2"><p className="line-clamp-1 text-sm font-extrabold">{title}</p><span className="shrink-0 text-[11px] text-muted-foreground">{time}</span></div><p className="line-clamp-2 text-xs leading-relaxed text-[#6d7083]">{text}</p></button>}
 function InfoRow({icon,label,value}:{icon:React.ReactNode;label:string;value:string}){return <div className="grid grid-cols-[20px_44px_1fr] items-start gap-2"><span className="pt-0.5 text-[#5963af] [&>svg]:size-4">{icon}</span><span className="font-bold text-[#696c7e]">{label}</span><span className="font-medium text-[#303344]">{value}</span></div>}
+function HandoffCard({handoff,onConfirm}:{handoff:PendingHandoff;onConfirm:(handoff:PendingHandoff,storageLocation:string)=>Promise<void>}){
+  const [storageLocation,setStorageLocation]=useState("");
+  const [busy,setBusy]=useState(false);
+  async function submit(){setBusy(true);try{await onConfirm(handoff,storageLocation);}finally{setBusy(false);}}
+  return <div className="rounded-[22px] border border-[#e1e3f0] bg-white p-4"><p className="font-extrabold">{handoff.title}</p><p className="mt-1 text-sm text-muted-foreground"><MapPin className="mr-1 inline size-4"/>습득 장소: {handoff.location}</p><p className="mt-2 text-xs text-muted-foreground">등록 학생의 이름과 이메일은 공개하지 않습니다.</p>{handoff.persisted&&<label className="mt-4 block text-sm font-bold">보관 장소<Input value={storageLocation} onChange={event=>setStorageLocation(event.target.value)} placeholder="예: 1층 교무실 분실물 보관함" className="mt-2 h-11 rounded-[14px] bg-[#f8f8fd]"/></label>}<Button disabled={handoff.received||busy} onClick={submit} className="mt-4 w-full rounded-full bg-[#4958c7] hover:bg-[#3847b5]"><PackageCheck className="size-4"/>{busy?"처리 중":handoff.received?"인수 완료":handoff.persisted?"인수 확인 및 공개":"인수 확인 및 3점 지급"}</Button></div>
+}
 function Notice({icon,title,text,tone="default"}:{icon:React.ReactNode;title:string;text:string;tone?:"default"|"reward"}){return <button className={`flex w-full items-start gap-3 rounded-[20px] p-4 text-left ${tone==="reward"?"bg-[#fff8dc] hover:bg-[#fff2ba]":"bg-[#f5f5fc] hover:bg-[#eeeff9]"}`}><span className={`grid size-10 shrink-0 place-items-center rounded-2xl [&>svg]:size-5 ${tone==="reward"?"bg-[#ffe17c] text-[#745400]":"bg-[#e0e3ff] text-[#4553b8]"}`}>{icon}</span><span className="min-w-0"><span className="flex items-center gap-2 text-sm font-extrabold">{title}<span className="size-2 rounded-full bg-[#e33f65]"/></span><span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{text}</span></span></button>}
 
 function RewardBadgeCard({badge}:{badge:{name:string;description:string;earned:boolean}}){return <div className={`rounded-[20px] border p-4 text-center ${badge.earned?"border-[#e4c35a] bg-[#fff8dc]":"border-[#e1e2e8] bg-[#f6f6f8] opacity-65"}`}><span className={`mx-auto grid size-11 place-items-center rounded-full ${badge.earned?"bg-[#ffe17c] text-[#765600]":"bg-[#e2e2e6] text-[#777985]"}`}>{badge.name==="분실물 해결사"?<Trophy className="size-5"/>:<Award className="size-5"/>}</span><p className="mt-3 text-sm font-extrabold">{badge.name}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{badge.earned?"획득 완료":badge.description}</p></div>}

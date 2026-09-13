@@ -5,6 +5,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
   type DocumentData,
   type Firestore,
@@ -37,6 +38,8 @@ export type StoredItem = {
   clueCount: number;
   description: string;
   imageUrl?: string;
+  authorId?: string;
+  isPublished?: boolean;
 };
 
 type CreateItemInput = {
@@ -67,18 +70,20 @@ function toStoredItem(snapshot: QueryDocumentSnapshot<DocumentData>): StoredItem
       : typeof data.imageUrl === "string"
         ? data.imageUrl
         : undefined,
+    authorId: String(data.authorId ?? ""),
+    isPublished: data.isPublished === true,
   };
 }
 
 export function subscribeToPublishedItems(
   db: Firestore,
+  canReviewPending: boolean,
   onItems: (items: StoredItem[]) => void,
   onError: (error: Error) => void,
 ): Unsubscribe {
-  const itemsQuery = query(
-    collection(db, "items"),
-    where("isPublished", "==", true),
-  );
+  const itemsQuery = canReviewPending
+    ? query(collection(db, "items"))
+    : query(collection(db, "items"), where("isPublished", "==", true));
 
   return onSnapshot(
     itemsQuery,
@@ -90,6 +95,22 @@ export function subscribeToPublishedItems(
     },
     onError,
   );
+}
+
+export async function confirmItemHandoff(
+  db: Firestore,
+  itemId: string,
+  teacherId: string,
+  storageLocation: string,
+) {
+  await updateDoc(doc(db, "items", itemId), {
+    status: "teacher_received",
+    isPublished: true,
+    storageLocation: storageLocation.trim(),
+    receivedById: teacherId,
+    receivedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function createItem(
