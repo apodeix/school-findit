@@ -67,6 +67,27 @@ button { cursor: pointer; }
   .item-card { min-height: 145px; gap: 13px; border-radius: 24px; padding: 11px; }
   .item-visual { width: 102px; flex-basis: 102px; border-radius: 18px 18px 18px 8px; }
 }
+/* Mobile dialogs follow the visible viewport, including the on-screen keyboard. */
+@media (max-width:639px) {
+  .findit-modal {
+    top: var(--dialog-top, 0px);
+    left: 0;
+    width: 100%;
+    max-width: 100%;
+    height: var(--dialog-height, 100dvh);
+    max-height: var(--dialog-height, 100dvh);
+    translate: none;
+    transform: none;
+    border-radius: 0;
+    align-content: start;
+    padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+    overflow-x: hidden;
+    scroll-padding-block: 24px;
+    animation: none;
+  }
+  .findit-modal input, .findit-modal textarea, .findit-modal select { font-size: 16px; }
+  .findit-modal > *, .findit-modal fieldset { min-width: 0; }
+}
 @media (prefers-reduced-motion:reduce) {
   *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; }
 }

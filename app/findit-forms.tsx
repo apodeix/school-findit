@@ -6,6 +6,7 @@ import {
   useState,
   type FormEvent,
   type ReactNode,
+  type CSSProperties,
 } from "react";
 import type { User } from "firebase/auth";
 import { Camera, ImagePlus, X } from "lucide-react";
@@ -62,6 +63,21 @@ export function Modal({
   description: string;
   children: ReactNode;
 }) {
+  const [viewport, setViewport] = useState<{ top: number; height: number } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const visual = window.visualViewport;
+    const update = () => setViewport({ top: visual?.offsetTop || 0, height: visual?.height || window.innerHeight });
+    update();
+    visual?.addEventListener("resize", update);
+    visual?.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => {
+      visual?.removeEventListener("resize", update);
+      visual?.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [open]);
   return (
     <Dialog
       open={open}
@@ -69,8 +85,19 @@ export function Modal({
         if (!v) onClose();
       }}
     >
-      <DialogContent className="max-h-[90dvh] overflow-y-auto rounded-[28px] sm:max-w-[650px]">
-        <DialogHeader className="text-left">
+      <DialogContent
+        className="findit-modal max-h-[90dvh] overflow-y-auto overscroll-contain rounded-[28px] sm:max-w-[650px]"
+        style={viewport ? { "--dialog-top": `${viewport.top}px`, "--dialog-height": `${viewport.height}px` } as CSSProperties : undefined}
+        onOpenAutoFocus={(event) => {
+          // Keep focus accessible without opening the phone keyboard on arrival.
+          if (window.matchMedia("(max-width: 639px)").matches) {
+            event.preventDefault();
+            const content = event.currentTarget as HTMLElement;
+            content?.focus?.({ preventScroll: true });
+          }
+        }}
+      >
+        <DialogHeader className="pr-6 text-left">
           <DialogTitle className="break-words text-2xl font-extrabold">
             {title}
           </DialogTitle>
