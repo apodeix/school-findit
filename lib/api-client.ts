@@ -2,22 +2,29 @@ import type { User } from "firebase/auth";
 import type { Clue, Item, Notice, Role } from "./domain";
 import type { RewardTransaction } from "./rewards";
 export type Snapshot = {
+  actorId?: string;
+  demo?: boolean;
   role: Role;
   items: Item[];
   clues: Clue[];
   notifications: Notice[];
   rewards: RewardTransaction[];
 };
+let demoRole: Role | null = null;
+export function setDemoRole(role: Role | null) { demoRole = role; }
+export function getDemoRole() { return demoRole; }
 export async function appRequest<T = { message: string }>(
   user: User,
   action: string,
   input: Record<string, unknown> = {},
 ): Promise<T> {
+  const role = demoRole;
   const response = await fetch("/api/app", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${await user.getIdToken()}`,
+      ...(role ? { "X-Findit-Demo-Role": role } : {}),
     },
     body: JSON.stringify({ action, ...input }),
     cache: "no-store",

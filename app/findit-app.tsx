@@ -47,7 +47,7 @@ import {
   isFirebaseConfigured,
   schoolEmailDomain,
 } from "@/lib/firebase/client";
-import { appRequest, type Snapshot } from "@/lib/api-client";
+import { appRequest, getDemoRole, setDemoRole, type Snapshot } from "@/lib/api-client";
 import {
   categories,
   isTeacher,
@@ -109,6 +109,29 @@ type Management = {
 };
 
 export default function FinditApp() {
+  const [mode, setMode] = useState<Role | "live" | null>(null);
+  useEffect(() => {
+    const initial = new URLSearchParams(window.location.search).get("demo") === "1" ? "student" : "live";
+    setDemoRole(initial === "live" ? null : initial);
+    // URL is available only after hydration; do not mount a live workspace first.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMode(initial);
+  }, []);
+  if (!mode) return <p className="p-6" role="status">화면을 준비하고 있어요…</p>;
+  return <>
+    {mode !== "live" && <section className="border-b border-amber-300 bg-amber-50 px-4 py-3 text-amber-950" aria-label="격리된 역할 시연">
+      <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-3">
+        <p className="text-sm font-bold">역할 시연 · 실제 데이터는 변경되지 않습니다</p>
+        <div className="flex flex-wrap gap-2">
+          {(["final_admin", "teacher", "student"] as Role[]).map(role => <Button key={role} variant={mode === role ? "default" : "outline"} className="rounded-full" aria-pressed={mode === role} onClick={() => { setDemoRole(role); setMode(role); }}>{roleLabels[role]}</Button>)}
+        </div>
+      </div>
+    </section>}
+    <FinditWorkspace key={mode} />
+  </>;
+}
+
+function FinditWorkspace() {
   const [user, setUser] = useState<User | null>(null),
     userRef = useRef<User | null>(null);
   const [data, setData] = useState<Snapshot>(empty),
@@ -222,7 +245,7 @@ export default function FinditApp() {
       }
       setLoading(true);
       void refresh();
-      if (!current.isAnonymous) revision = onSnapshot(
+      if (!current.isAnonymous && !getDemoRole()) revision = onSnapshot(
         doc(db, "app_settings", "revision"),
         () => void refresh(),
         () => {
@@ -249,8 +272,8 @@ export default function FinditApp() {
     (n) => !n.read && n.status !== "cancelled",
   ).length;
   const summary = useMemo(
-    () => getRewardSummary(data.rewards, user?.uid || ""),
-    [data.rewards, user?.uid],
+    () => getRewardSummary(data.rewards, data.actorId || user?.uid || ""),
+    [data.rewards, data.actorId, user?.uid],
   );
   const ownClues = data.clues.filter((c) => c.isMine),
     pending = data.items.filter(
@@ -378,7 +401,7 @@ export default function FinditApp() {
     setPrompt({ title, action, input, field, initial, label, description });
   }
   function codeDialog() {
-    if (user?.isAnonymous) { void login(); return; }
+    if (user?.isAnonymous && !getDemoRole()) { void login(); return; }
     setPrompt({
       title: admin ? "교사 인증코드 변경" : "교사 인증",
       description: admin
@@ -466,7 +489,7 @@ export default function FinditApp() {
                     </span>
                   )}
                 </Button>
-                {!user.isAnonymous && <Button
+                {!user.isAnonymous && !getDemoRole() && <Button
                   variant="ghost"
                   className="rounded-full"
                   onClick={logout}
@@ -735,7 +758,7 @@ export default function FinditApp() {
                       description="본인의 활동과 계정 설정을 확인하세요."
                     >
                       <div className={panel}>
-                        <p className="break-all font-bold">{user.isAnonymous ? "연수용 학생" : user.email}</p>
+                        <p className="break-all font-bold">{getDemoRole() ? `${roleLabels[data.role]} 시연 계정` : user.isAnonymous ? "연수용 학생" : user.email}</p>
                         <p className="mt-2 text-sm">
                           {roleLabels[data.role]} · 이 계정 정보는 본인에게만
                           표시됩니다.
@@ -762,7 +785,7 @@ export default function FinditApp() {
                               onClick={codeDialog}
                             >
                               <KeyRound />
-                              {admin ? "교사 인증코드 설정" : user.isAnonymous ? "교사 Google 로그인" : "교사 인증"}
+                              {admin ? "교사 인증코드 설정" : user.isAnonymous && !getDemoRole() ? "교사 Google 로그인" : "교사 인증"}
                             </Button>
                           )}
                           {teacher && (
@@ -783,8 +806,8 @@ export default function FinditApp() {
                               </Button>
                             </>
                           )}
-                          {!user.isAnonymous && <Button variant="outline" className="rounded-full" onClick={logout}><LogOut />로그아웃</Button>}
-                          {user.isAnonymous && <p className="text-sm leading-6 text-muted-foreground">연수용 학생 계정입니다. 작성한 내용은 실제 저장됩니다. 탭을 닫거나 교사 계정으로 전환하면 이전 학생 글의 수정 권한을 잃을 수 있습니다.</p>}
+                          {!user.isAnonymous && !getDemoRole() && <Button variant="outline" className="rounded-full" onClick={logout}><LogOut />로그아웃</Button>}
+                          {getDemoRole() ? <p className="text-sm leading-6 text-muted-foreground">별도 시연 공간의 계정입니다. 글·포인트·인증코드·권한 변경은 복사본에만 저장됩니다.</p> : user.isAnonymous && <p className="text-sm leading-6 text-muted-foreground">연수용 학생 계정입니다. 작성한 내용은 실제 저장됩니다. 탭을 닫거나 교사 계정으로 전환하면 이전 학생 글의 수정 권한을 잃을 수 있습니다.</p>}
                         </div>
                       </div>
                       <div className="rounded-[28px] border border-[#e6cd77] bg-[#fff7d9] p-6">

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { WORKSHOP_GUEST_ACCESS } from "../lib/workshop.js";
+import { demoScope, scopedDatabase } from "../lib/server/demo-scope.js";
 import { hashTeacherCode, matchesTeacherCode, newTeacherCode } from "../lib/server/teacher-code.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
@@ -57,7 +58,7 @@ function database() {
       projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "school-findit",
     });
   }
-  return getFirestore();
+  return scopedDatabase(getFirestore());
 }
 const idInput = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const iso = (v: unknown): string =>
@@ -1066,6 +1067,23 @@ export default async function handler(
     );
     const input = z.record(z.unknown()).parse(body),
       action = z.string().max(60).parse(input.action);
+    const demoRole = req.headers["x-findit-demo-role"];
+    if (demoRole !== undefined) {
+      requireThat(WORKSHOP_GUEST_ACCESS, "연수용 역할 시연이 종료되었습니다.");
+      const role = z.enum(roles).parse(demoRole);
+      database();
+      // Real identity is verified, but its real profile/role is never modified.
+      await getAuth().verifyIdToken(auth.slice(7), true);
+      const result = await demoScope.run(true, async () => {
+        const actor = { uid: `demo-${role}`, role, email: `${role}@example.invalid` };
+        requireThat((await database().doc(`users/${actor.uid}`).get()).exists, "시연 공간 준비 중입니다.", 503);
+        const result = await dispatch(actor, action, input);
+        return action === "snapshot" ? { ...result, actorId: actor.uid, demo: true } : result;
+      });
+      res.statusCode = 200;
+      res.end(JSON.stringify(result));
+      return;
+    }
     const actor = await authenticate(auth.slice(7));
     res.statusCode = 200;
     res.end(JSON.stringify(await dispatch(actor, action, input)));
