@@ -39,10 +39,9 @@ export default defineConfig(async () => {
   const isVercel = Boolean(process.env.VERCEL);
 
   if (isVercel) {
-    const { nitro } = await import("nitro/vite");
     const { default: tailwindcss } = await import("@tailwindcss/vite");
     return {
-      plugins: [tailwindcss(), vinext(), nitro()],
+      plugins: [tailwindcss(), vinext()],
     };
   }
 
