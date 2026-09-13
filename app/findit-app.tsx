@@ -1,4 +1,6 @@
 "use client";
+import { DemoPreview } from "./demo-preview";
+import { BrandMark } from "@/components/brand-mark";
 import {
   useCallback,
   useEffect,
@@ -346,7 +348,7 @@ export default function FinditApp() {
     setPrompt({
       title: admin ? "교사 인증코드 변경" : "교사 인증",
       description: admin
-        ? "8~32자의 코드를 정해 교직원에게만 공유하세요. 이미 인증된 교사 권한은 유지됩니다."
+        ? "영문·숫자·기호 중 두 종류 이상을 섞어 12~32자로 설정하세요. 교직원에게만 공유하고, 기존의 짧은 코드는 교체해 주세요. 이미 인증된 교사 권한은 유지됩니다."
         : "교직원 메신저로 안내받은 코드를 입력하세요. 5회 실패하면 15분 뒤 다시 시도할 수 있습니다.",
       action: admin ? "teacher.code" : "teacher.verify",
       input: {},
@@ -400,10 +402,7 @@ export default function FinditApp() {
             onClick={() => navigate("all")}
             aria-label="어디 있니? 전체 물건"
           >
-            <span className="brand-mark">
-              <Search />
-              <span className="brand-spark" />
-            </span>
+            <BrandMark />
             <span>
               <span className="block text-xl font-extrabold">어디 있니?</span>
               <span className="block text-sm text-muted-foreground">
@@ -485,25 +484,7 @@ export default function FinditApp() {
         </aside>
         <main className="min-w-0 space-y-5">
           {!user ? (
-            <div className={`${panel} space-y-4`}>
-              <h1 className="text-2xl font-extrabold">
-                잃어버린 물건을 찾아보세요
-              </h1>
-              <p>
-                로그인하면 물건 검색, 분실 신고, 찾기 단서 작성을 할 수 있어요.
-              </p>
-              <Button
-                onClick={login}
-                disabled={busy || !isFirebaseConfigured}
-                className="h-12 rounded-full"
-              >
-                <LogIn />
-                Google 계정으로 시작하기
-              </Button>
-              <p className="text-sm text-muted-foreground">
-                다른 학생에게 실명과 이메일을 공개하지 않습니다.
-              </p>
-            </div>
+            <DemoPreview onLogin={login} disabled={busy || !isFirebaseConfigured}/>
           ) : (
             <>
               {error && (

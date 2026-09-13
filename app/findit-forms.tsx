@@ -518,7 +518,7 @@ export function ActionPrompt({
                 name="value"
                 type="password"
                 autoComplete="new-password"
-                minLength={8}
+                minLength={prompt.action === "teacher.code" ? 12 : 8}
                 maxLength={32}
                 required
                 disabled={busy}

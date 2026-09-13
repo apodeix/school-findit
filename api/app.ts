@@ -1,9 +1,5 @@
-import {
-  createHash,
-  randomBytes,
-  scryptSync,
-  timingSafeEqual,
-} from "node:crypto";
+import { createHash } from "node:crypto";
+import { hashTeacherCode, matchesTeacherCode, newTeacherCode } from "../lib/server/teacher-code.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
@@ -449,11 +445,10 @@ export async function dispatch(
         settings = (await tx.get(ref)).data() || {};
       if (action === "teacher.code") {
         requireThat(actor.role === "final_admin");
-        const salt = randomBytes(16).toString("hex");
+        newTeacherCode.parse(code);
+        requireThat(!matchesTeacherCode(code, settings), "이전과 다른 인증코드를 설정해 주세요.", 400);
         tx.update(ref, {
-          teacherCodeSalt: salt,
-          teacherCodeHash: scryptSync(code, salt, 32).toString("hex"),
-          teacherCodeAlgorithm: "scrypt",
+          ...hashTeacherCode(code),
           teacherCodeUpdatedBy: actor.uid,
           teacherCodeUpdatedAt: now(),
         });
@@ -461,6 +456,7 @@ export async function dispatch(
         return { message: "교사 인증코드를 변경했습니다." };
       }
       requireThat(actor.role === "student", "이미 교사로 인증된 계정입니다.");
+      requireThat(settings.teacherCodeAlgorithm === "scrypt", "인증 보안이 강화되었습니다. 최종 관리자가 새 교사 인증코드를 설정한 뒤 다시 시도해 주세요.", 409);
       const profile = (await tx.get(db.doc(`users/${actor.uid}`))).data();
       requireThat(
         !profile?.revokedCodeHash ||
@@ -476,16 +472,7 @@ export async function dispatch(
         "인증을 여러 번 시도했습니다. 15분 후 다시 시도해 주세요.",
         429,
       );
-      const expected = String(settings.teacherCodeHash || "");
-      const actual =
-        settings.teacherCodeAlgorithm === "scrypt"
-          ? scryptSync(code, String(settings.teacherCodeSalt), 32).toString(
-              "hex",
-            )
-          : digest(code);
-      const valid =
-        expected.length === actual.length &&
-        timingSafeEqual(Buffer.from(expected), Buffer.from(actual));
+      const valid = matchesTeacherCode(code, settings);
       tx.set(attemptsRef, {
         windowStart: inWindow ? attempts?.windowStart : Date.now(),
         count: inWindow ? Number(attempts?.count || 0) + 1 : 1,
