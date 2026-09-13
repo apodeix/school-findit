@@ -16,7 +16,12 @@ function readRole(value: unknown): UserRole {
 export async function ensureUserProfile(db: Firestore, user: User): Promise<UserRole> {
   const userReference = doc(db, "users", user.uid);
   const current = await getDoc(userReference);
-  if (current.exists()) return readRole(current.data().role);
+  if (current.exists()) {
+    const storedRole = readRole(current.data().role);
+    if (storedRole !== "student") return storedRole;
+    const verification = await getDoc(doc(db, "teacher_verifications", user.uid));
+    return verification.exists() && verification.data().active === true ? "teacher" : "student";
+  }
 
   const profile = {
     email: user.email,

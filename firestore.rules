@@ -32,13 +32,52 @@ service cloud.firestore {
 
     function isTeacher() {
       return isSchoolUser()
+        && (
+          (
+            exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+              in ['teacher', 'final_admin']
+          )
+          || (
+            exists(/databases/$(database)/documents/teacher_verifications/$(request.auth.uid))
+            && get(/databases/$(database)/documents/teacher_verifications/$(request.auth.uid)).data.active == true
+          )
+        );
+    }
+
+    function isFinalAdmin() {
+      return isSchoolUser()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
-          in ['teacher', 'final_admin'];
+          == 'final_admin';
     }
 
     match /app_settings/{document} {
-      allow read, write: if false;
+      allow read, create, delete: if false;
+      allow update: if document == 'security'
+        && isFinalAdmin()
+        && request.resource.data.teacherCodeHash is string
+        && request.resource.data.teacherCodeHash.matches('[0-9a-f]{64}')
+        && request.resource.data.teacherCodeUpdatedBy == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'teacherCodeHash', 'teacherCodeUpdatedAt', 'teacherCodeUpdatedBy'
+        ]);
+    }
+
+    match /teacher_verifications/{userId} {
+      allow read: if isSchoolUser() && request.auth.uid == userId;
+      allow create: if isSchoolUser()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly([
+          'userId', 'codeHash', 'active', 'verifiedAt'
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.active == true
+        && request.resource.data.codeHash is string
+        && request.resource.data.codeHash.matches('[0-9a-f]{64}')
+        && request.resource.data.codeHash
+          == get(/databases/$(database)/documents/app_settings/security).data.teacherCodeHash;
+      allow update, delete: if false;
     }
 
     match /users/{userId} {
@@ -92,6 +131,40 @@ service cloud.firestore {
           'status', 'isPublished', 'storageLocation', 'receivedById',
           'receivedAt', 'updatedAt'
         ]);
+      allow delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isSchoolUser()
+        && (resource.data.userId == request.auth.uid || isFinalAdmin());
+      allow create: if isTeacher()
+        && request.resource.data.keys().hasOnly([
+          'userId', 'type', 'title', 'message', 'itemId', 'read', 'status',
+          'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.type == 'found_item_received'
+        && request.resource.data.itemId is string
+        && request.resource.data.userId
+          == get(/databases/$(database)/documents/items/$(request.resource.data.itemId)).data.authorId
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.read == false
+        && request.resource.data.status == 'active';
+      allow update: if (
+          isSchoolUser()
+          && resource.data.userId == request.auth.uid
+          && request.resource.data.read == true
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'read', 'updatedAt'
+          ])
+        ) || (
+          isFinalAdmin()
+          && resource.data.status == 'active'
+          && request.resource.data.status == 'cancelled'
+          && request.resource.data.cancelledBy == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'cancelledBy', 'cancelledAt', 'updatedAt'
+          ])
+        );
       allow delete: if false;
     }
 

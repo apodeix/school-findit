@@ -4,8 +4,8 @@
 
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
-  Award, Bell, Camera, Check, ChevronRight, CircleUserRound, Clock3, Eye, Gift, Home,
-  ImagePlus, Lightbulb, MapPin, Megaphone, PackageCheck, PackageOpen,
+  Award, Bell, Camera, Check, ChevronRight, CircleUserRound, Clock3, Gift, Home,
+  ImagePlus, KeyRound, Lightbulb, MapPin, Megaphone, PackageCheck, PackageOpen,
   LoaderCircle, LogIn, LogOut, PenLine, Plus, RotateCcw, Search, ShieldCheck, Sparkles,
   Tag, Trophy, X,
 } from "lucide-react";
@@ -35,6 +35,8 @@ import {
   type StoredItem,
 } from "@/lib/firebase/items";
 import { ensureUserProfile, type UserRole } from "@/lib/firebase/users";
+import { changeTeacherCode, verifyTeacherCode } from "@/lib/firebase/teacher-verification";
+import { cancelNotification, markNotificationRead, subscribeToAllNotifications, subscribeToNotifications, type AppNotification } from "@/lib/firebase/notifications";
 import { prepareItemImage } from "@/lib/images";
 import {
   REWARD_POINTS,
@@ -96,6 +98,7 @@ const tones: Record<string,string> = {
 };
 
 export default function LostFoundApp() {
+  const [section,setSection] = useState<"all"|"mine"|"clues">("all");
   const [kind,setKind] = useState<"all"|Kind>("all");
   const [query,setQuery] = useState("");
   const [selected,setSelected] = useState<Item|null>(null);
@@ -115,6 +118,14 @@ export default function LostFoundApp() {
   const [photoPreview,setPhotoPreview] = useState("");
   const [photoBusy,setPhotoBusy] = useState(false);
   const [registerBusy,setRegisterBusy] = useState(false);
+  const [registerError,setRegisterError] = useState("");
+  const [formErrors,setFormErrors] = useState<Record<string,string>>({});
+  const [teacherCodeOpen,setTeacherCodeOpen] = useState(false);
+  const [teacherCodeBusy,setTeacherCodeBusy] = useState(false);
+  const [teacherCodeError,setTeacherCodeError] = useState("");
+  const [notifications,setNotifications] = useState<AppNotification[]>([]);
+  const [adminNotifications,setAdminNotifications] = useState<AppNotification[]>([]);
+  const [notificationAdminOpen,setNotificationAdminOpen] = useState(false);
 
   const demoUserId = "demo-current-user";
   const rewardSummary = useMemo(
@@ -136,20 +147,29 @@ export default function LostFoundApp() {
         persisted:true,
       }));
   }, [items, pendingHandoffs, userRole]);
+  const unreadCount = notifications.filter(notification => !notification.read && notification.status==="active").length;
 
   useEffect(() => {
     if (!isFirebaseConfigured) return;
     const { auth, db } = getFirebaseServices();
     let unsubscribeItems: (() => void) | undefined;
+    let unsubscribeNotifications: (() => void) | undefined;
+    let unsubscribeAdminNotifications: (() => void) | undefined;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async user => {
       unsubscribeItems?.();
       unsubscribeItems = undefined;
+      unsubscribeNotifications?.();
+      unsubscribeNotifications = undefined;
+      unsubscribeAdminNotifications?.();
+      unsubscribeAdminNotifications = undefined;
 
       if (!user) {
         setAuthUser(null);
         setUserRole(null);
         setItems(initialItems);
+        setNotifications([]);
+        setAdminNotifications([]);
         return;
       }
 
@@ -173,23 +193,40 @@ export default function LostFoundApp() {
       unsubscribeItems = subscribeToPublishedItems(
         db,
         role==="teacher"||role==="final_admin",
+        user.uid,
         rows => setItems(rows.map(item => ({ ...item, isMine:item.authorId===user.uid }))),
         () => flash("Firebase 목록을 불러오지 못했습니다. 보안 규칙을 확인해 주세요."),
       );
+      unsubscribeNotifications = subscribeToNotifications(
+        db,
+        user.uid,
+        setNotifications,
+        () => flash("알림을 불러오지 못했습니다."),
+      );
+      if (role === "final_admin") {
+        unsubscribeAdminNotifications = subscribeToAllNotifications(
+          db,
+          setAdminNotifications,
+          () => flash("관리용 알림 내역을 불러오지 못했습니다."),
+        );
+      }
     });
 
     return () => {
       unsubscribeItems?.();
+      unsubscribeNotifications?.();
+      unsubscribeAdminNotifications?.();
       unsubscribeAuth();
     };
   }, []);
 
   const filtered = useMemo(() => {
     const needle=query.trim().toLowerCase();
-    return items.filter(item => (kind==="all"||item.kind===kind) && (!needle||`${item.title} ${item.location} ${item.category} ${item.color}`.toLowerCase().includes(needle)));
-  },[items,kind,query]);
+    if(section==="clues") return [];
+    return items.filter(item => (section!=="mine"||item.isMine) && (kind==="all"||item.kind===kind) && (!needle||`${item.title} ${item.location} ${item.category} ${item.color}`.toLowerCase().includes(needle)));
+  },[items,kind,query,section]);
 
-  function flash(message:string){ setToast(message); setTimeout(()=>setToast(""),2600); }
+  function flash(message:string){ setToast(message); setTimeout(()=>setToast(""),5000); }
   async function handleSignIn(){
     if (!isFirebaseConfigured) return;
     setAuthBusy(true);
@@ -213,6 +250,69 @@ export default function LostFoundApp() {
     if (!isFirebaseConfigured) return;
     await signOut(getFirebaseServices().auth);
     flash("로그아웃했습니다.");
+  }
+
+  async function requestRegistration() {
+    if (isFirebaseConfigured && !authUser) {
+      flash("물건을 등록하려면 먼저 Google 계정으로 로그인해 주세요.");
+      await handleSignIn();
+      return;
+    }
+    setRegisterError("");
+    setFormErrors({});
+    setRegisterOpen(true);
+  }
+
+  async function submitTeacherCode(formData: FormData) {
+    if (!authUser || !userRole) return;
+    const code = String(formData.get("teacherCode") ?? "");
+    setTeacherCodeBusy(true);
+    setTeacherCodeError("");
+    try {
+      const { db } = getFirebaseServices();
+      if (userRole === "final_admin") {
+        await changeTeacherCode(db, authUser.uid, code);
+        setTeacherCodeOpen(false);
+        flash("새 교사 인증코드를 설정했습니다. 교직원에게만 공유해 주세요.");
+      } else {
+        await verifyTeacherCode(db, authUser.uid, code);
+        setUserRole("teacher");
+        setTeacherCodeOpen(false);
+        flash("교사 인증이 완료되었습니다. 교사 메뉴가 열렸습니다.");
+        setTimeout(() => window.location.reload(), 900);
+      }
+    } catch (error) {
+      setTeacherCodeError(
+        error instanceof Error && error.message.startsWith("인증코드는")
+          ? error.message
+          : userRole === "final_admin"
+            ? "인증코드를 설정하지 못했습니다. 최종 관리자 권한을 확인해 주세요."
+            : "인증코드가 올바르지 않습니다. 다시 확인해 주세요.",
+      );
+    } finally {
+      setTeacherCodeBusy(false);
+    }
+  }
+
+  async function openNotification(notification: AppNotification) {
+    if (!notification.read && authUser) {
+      await markNotificationRead(getFirebaseServices().db, notification.id).catch(() => undefined);
+    }
+    setNoticeOpen(false);
+    if (notification.itemId) {
+      const relatedItem = items.find(item => item.id === notification.itemId);
+      if (relatedItem) setSelected(relatedItem);
+    }
+  }
+
+  async function cancelSentNotification(notification: AppNotification) {
+    if (!authUser || userRole!=="final_admin" || notification.status==="cancelled") return;
+    try {
+      await cancelNotification(getFirebaseServices().db, notification.id, authUser.uid);
+      flash("잘못 전달된 알림을 취소했습니다. 수신자 화면에도 취소로 표시됩니다.");
+    } catch {
+      flash("알림을 취소하지 못했습니다. 관리자 권한을 확인해 주세요.");
+    }
   }
 
   function markHelpful(clue: DemoClue) {
@@ -241,7 +341,7 @@ export default function LostFoundApp() {
         return;
       }
       try {
-        await confirmItemHandoff(getFirebaseServices().db, handoff.id, authUser.uid, storageLocation);
+        await confirmItemHandoff(getFirebaseServices().db, handoff.id, authUser.uid, handoff.studentId, storageLocation);
         flash("교사 인수를 확인하고 공개 목록에 반영했습니다.");
       } catch {
         flash("인수 처리에 실패했습니다. 권한과 보관 장소를 확인해 주세요.");
@@ -293,13 +393,25 @@ export default function LostFoundApp() {
   function changeRegisterOpen(open: boolean) {
     if (registerBusy) return;
     setRegisterOpen(open);
-    if (!open) clearPhoto();
+    if (!open) {
+      clearPhoto();
+      setRegisterError("");
+      setFormErrors({});
+    }
   }
 
   async function addDemoItem(formData:FormData){
-    const title=String(formData.get("title")||"새로 등록한 물건");
-    const location=String(formData.get("location")||"장소 확인 중");
-    const description=String(formData.get("description")||"상세 설명이 없습니다.");
+    const title=String(formData.get("title")||"").trim();
+    const location=String(formData.get("location")||"").trim();
+    const description=String(formData.get("description")||"").trim();
+    const dateText=String(formData.get("date")||"").trim();
+    const errors:Record<string,string>={};
+    if(title.length<2) errors.title="물건 이름을 2자 이상 입력해 주세요.";
+    if(location.length<2) errors.location="마지막으로 본 장소를 2자 이상 입력해 주세요.";
+    if(!dateText) errors.date="날짜를 선택해 주세요.";
+    setFormErrors(errors);
+    setRegisterError("");
+    if(Object.keys(errors).length>0) return;
 
     if (isFirebaseConfigured) {
       if (!authUser) {
@@ -310,21 +422,22 @@ export default function LostFoundApp() {
       try {
         const { db } = getFirebaseServices();
         await createItem(db, {
-          kind:newKind, title, location, description, authorId:authUser.uid,
+          kind:newKind, title, location, description:description||"상세 설명이 없습니다.", authorId:authUser.uid,
           imageDataUrl:photoPreview || undefined,
+          dateText,
         });
         setRegisterOpen(false);
         clearPhoto();
         flash(newKind==="lost" ? "분실 신고가 저장되었습니다." : "습득물이 전달 대기로 저장되었습니다.");
       } catch {
-        flash("Firebase에 저장하지 못했습니다. 사진 용량이나 보안 규칙을 확인해 주세요.");
+        setRegisterError("등록하지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요. 계속 실패하면 관리자에게 알려주세요.");
       } finally {
         setRegisterBusy(false);
       }
       return;
     }
 
-    setItems(current => [{ id:`demo-${Date.now()}`, kind:newKind, title, location, description, category:"기타", date:"오늘", status:newKind==="lost"?"찾는 중":"전달 대기", color:"", tone:newKind==="lost"?"violet":"blue", clueCount:0 },...current]);
+    setItems(current => [{ id:`demo-${Date.now()}`, kind:newKind, title, location, description:description||"상세 설명이 없습니다.", category:"기타", date:dateText, status:newKind==="lost"?"찾는 중":"전달 대기", color:"", tone:newKind==="lost"?"violet":"blue", clueCount:0 },...current]);
     setRegisterOpen(false); flash(`${newKind==="lost"?"분실 신고":"습득물"}가 시연 목록에 등록되었습니다.`);
   }
 
@@ -334,31 +447,33 @@ export default function LostFoundApp() {
         <button className="brand-mark" aria-label="어디 있니? 홈"><Search className="size-6 stroke-[2.4]"/><span className="brand-spark"/></button>
         <div className="min-w-0"><div className="flex items-baseline gap-2"><h1 className="text-[1.28rem] font-extrabold tracking-[-0.055em] sm:text-[1.45rem]">어디 있니?</h1><span className="hidden text-sm font-medium text-muted-foreground sm:inline">우리 학교 분실물 찾기</span></div></div>
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="ghost" size="icon-lg" className="relative rounded-full hover:bg-[#eeedff]" aria-label="알림 3개" onClick={()=>setNoticeOpen(true)}><Bell className="size-5"/><span className="absolute right-1 top-1 grid size-[18px] place-items-center rounded-full bg-[#e33f65] text-[10px] font-bold text-white">3</span></Button>
-          {isFirebaseConfigured ? authUser ? <button onClick={handleSignOut} className="hidden items-center gap-2 rounded-full border border-[#d9dcf0] bg-white px-3 py-2 text-sm font-bold shadow-[0_2px_8px_rgba(40,45,85,.05)] sm:flex"><span className="grid size-8 place-items-center rounded-full bg-[#e0e3ff] text-[#3e4daf]">{authUser.displayName?.slice(0,1)||"학"}</span><span>{userRole==="final_admin"?"최종 관리자":userRole==="teacher"?"일반 교사":"학생"}</span><LogOut className="size-4"/></button> : <Button variant="outline" className="rounded-full" disabled={authBusy} onClick={handleSignIn}><LogIn className="size-4"/>{authBusy?"로그인 중":"학교 계정 로그인"}</Button> : <span className="hidden rounded-full bg-[#fff4cf] px-3 py-2 text-xs font-bold text-[#725700] sm:inline">시연 모드</span>}
+          {authUser&&(userRole==="student"||userRole==="final_admin")&&<Button variant="outline" size="sm" className="rounded-full" aria-label={userRole==="final_admin"?"교사 인증코드 설정":"교사 인증"} onClick={()=>{setTeacherCodeError("");setTeacherCodeOpen(true)}}><KeyRound className="size-4"/><span className="hidden sm:inline">{userRole==="final_admin"?"인증코드 설정":"교사 인증"}</span></Button>}
+          {userRole==="final_admin"&&<Button variant="ghost" size="icon" className="rounded-full" onClick={()=>setNotificationAdminOpen(true)} aria-label="발송 알림 관리" title="발송 알림 관리"><Megaphone className="size-5"/></Button>}
+          <Button variant="ghost" size="icon-lg" className="relative rounded-full hover:bg-[#eeedff]" aria-label={`읽지 않은 알림 ${unreadCount}개`} onClick={()=>setNoticeOpen(true)}><Bell className="size-5"/>{unreadCount>0&&<span className="absolute right-1 top-1 grid min-h-[18px] min-w-[18px] place-items-center rounded-full bg-[#e33f65] px-1 text-[10px] font-bold text-white">{unreadCount>99?"99+":unreadCount}</span>}</Button>
+          {isFirebaseConfigured ? authUser ? <><div className="hidden items-center gap-2 rounded-full border border-[#d9dcf0] bg-white px-3 py-2 text-sm font-bold shadow-[0_2px_8px_rgba(40,45,85,.05)] sm:flex"><span className="grid size-8 place-items-center rounded-full bg-[#e0e3ff] text-[#3e4daf]">{authUser.displayName?.slice(0,1)||"학"}</span><span>{userRole==="final_admin"?"최종 관리자":userRole==="teacher"?"일반 교사":"학생"}</span></div><Button variant="ghost" size="icon" className="rounded-full" onClick={handleSignOut} aria-label="로그아웃" title="로그아웃"><LogOut className="size-5"/></Button></> : <Button variant="outline" className="rounded-full" disabled={authBusy} onClick={handleSignIn}><LogIn className="size-4"/>{authBusy?"로그인 중":"학교 계정 로그인"}</Button> : <span className="hidden rounded-full bg-[#fff4cf] px-3 py-2 text-xs font-bold text-[#725700] sm:inline">시연 모드</span>}
         </div>
       </div>
     </header>
 
     <div className="mx-auto grid max-w-[1440px] lg:grid-cols-[220px_minmax(0,1fr)_280px]">
       <aside className="sticky top-[72px] hidden h-[calc(100vh-72px)] border-r border-[#e0e2ef] px-5 py-7 lg:flex lg:flex-col">
-        <nav className="space-y-1" aria-label="주요 메뉴"><SideLink icon={<Home/>} label="물건 찾기" active/><SideLink icon={<PenLine/>} label="내가 쓴 글"/><SideLink icon={<Lightbulb/>} label="내가 남긴 단서"/><SideLink icon={<Award/>} label="내 도움 포인트" count={`${rewardSummary.totalPoints}점`} onClick={()=>setProfileOpen(true)}/><SideLink icon={<Bell/>} label="알림" count="3" onClick={()=>setNoticeOpen(true)}/></nav>
-        {(userRole==="teacher"||userRole==="final_admin")&&<><div className="my-6 h-px bg-[#e2e4f0]"/><p className="mb-2 px-3 text-xs font-bold tracking-wide text-muted-foreground">교사 메뉴</p><nav className="space-y-1"><SideLink icon={<PackageCheck/>} label="인수 대기" count={`${visiblePendingHandoffs.filter(item=>!item.received).length}`} onClick={()=>setHandoffOpen(true)}/>{userRole==="final_admin"&&<SideLink icon={<ShieldCheck/>} label="포인트 관리" onClick={()=>setAdminOpen(true)}/>}</nav></>}
+        <nav className="space-y-1" aria-label="주요 메뉴"><SideLink icon={<Home/>} label="물건 찾기" active={section==="all"} onClick={()=>setSection("all")}/><SideLink icon={<PenLine/>} label="내가 쓴 글" active={section==="mine"} onClick={()=>setSection("mine")}/><SideLink icon={<Lightbulb/>} label="내가 남긴 단서" active={section==="clues"} onClick={()=>setSection("clues")}/><SideLink icon={<Award/>} label="내 도움 포인트" count={`${rewardSummary.totalPoints}점`} onClick={()=>setProfileOpen(true)}/><SideLink icon={<Bell/>} label="알림" count={unreadCount>0?`${unreadCount}`:undefined} onClick={()=>setNoticeOpen(true)}/></nav>
+        {(userRole==="teacher"||userRole==="final_admin")&&<><div className="my-6 h-px bg-[#e2e4f0]"/><p className="mb-2 px-3 text-xs font-bold tracking-wide text-muted-foreground">교사 메뉴</p><nav className="space-y-1"><SideLink icon={<PackageCheck/>} label="인수 대기" count={`${visiblePendingHandoffs.filter(item=>!item.received).length}`} onClick={()=>setHandoffOpen(true)}/>{userRole==="final_admin"&&<><SideLink icon={<Megaphone/>} label="발송 알림 관리" onClick={()=>setNotificationAdminOpen(true)}/><SideLink icon={<ShieldCheck/>} label="포인트 관리" onClick={()=>setAdminOpen(true)}/></>}</nav></>}
         {userRole&&<div className="mt-auto rounded-[24px] bg-[#eef0ff] p-4 text-[#303b91]"><div className="mb-2 flex items-center gap-2 text-sm font-bold"><ShieldCheck className="size-4"/>{userRole==="final_admin"?"최종 관리자":userRole==="teacher"?"교사 인증 완료":"학생 계정"}</div><p className="text-xs leading-relaxed text-[#5961a1]">{userRole==="student"?"분실 신고와 습득물 등록, 찾기 단서를 이용할 수 있습니다.":"습득물을 확인하고 보관 장소를 안내할 수 있습니다."}</p></div>}
       </aside>
 
       <main className="min-w-0 px-4 pb-28 pt-6 sm:px-7 sm:pt-8 lg:px-9 lg:pb-12"><section className="mx-auto max-w-[880px]">
-        <div className="mb-5 flex items-end justify-between gap-4"><div><p className="mb-1 flex items-center gap-1.5 text-sm font-bold text-[#4a56ba]"><Sparkles className="size-4"/>오늘 새 소식 4개</p><h2 className="text-[1.7rem] font-extrabold tracking-[-0.045em] sm:text-[2rem]">잃어버린 물건을 찾아보세요</h2></div><Button className="hidden h-12 rounded-full bg-[#4958c7] px-5 text-[15px] shadow-[0_8px_22px_rgba(73,88,199,.25)] hover:bg-[#3847b5] sm:flex" onClick={()=>setRegisterOpen(true)}><Plus className="size-5"/>물건 등록</Button></div>
+        <div className="mb-5 flex items-end justify-between gap-4"><div><p className="mb-1 flex items-center gap-1.5 text-sm font-bold text-[#4a56ba]"><Sparkles className="size-4"/>{section==="all"?"검색하고, 없으면 등록하세요":section==="mine"?"내가 등록한 진행 상태를 확인하세요":"내가 제공한 도움을 확인하세요"}</p><h2 className="text-[1.7rem] font-extrabold tracking-[-0.045em] sm:text-[2rem]">{section==="all"?"잃어버린 물건을 찾아보세요":section==="mine"?"내가 쓴 글":"내가 남긴 찾기 단서"}</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">{section==="all"?"물건 이름이나 장소로 먼저 검색하고, 찾는 글이 없으면 새로 등록할 수 있어요.":section==="mine"?"전달 대기 중인 습득물과 공개된 내 글을 한곳에서 확인할 수 있어요.":"아직 실제 단서 저장 기능을 연결하는 중입니다."}</p></div>{section!=="clues"&&<Button className="hidden h-12 shrink-0 rounded-full bg-[#4958c7] px-5 text-[15px] shadow-[0_8px_22px_rgba(73,88,199,.25)] hover:bg-[#3847b5] sm:flex" onClick={requestRegistration}><Plus className="size-5"/>{isFirebaseConfigured&&!authUser?"로그인 후 등록":"물건 등록"}</Button>}</div>
         <div className="search-shell"><Search className="size-5 shrink-0 text-[#4b5599]"/><Input value={query} onChange={e=>setQuery(e.target.value)} className="h-auto border-0 bg-transparent p-0 text-base shadow-none focus-visible:ring-0" placeholder="물건 이름, 색상, 잃어버린 장소로 검색" aria-label="분실물 검색"/>{query&&<Button variant="ghost" size="icon-sm" className="rounded-full" onClick={()=>setQuery("")} aria-label="검색어 지우기"><X/></Button>}</div>
         <div className="scrollbar-none -mx-4 mt-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0" aria-label="물건 종류 필터"><FilterChip active={kind==="all"} onClick={()=>setKind("all")}>전체 {items.length}</FilterChip><FilterChip active={kind==="lost"} onClick={()=>setKind("lost")}>잃어버렸어요</FilterChip><FilterChip active={kind==="found"} onClick={()=>setKind("found")}>주인을 찾아요</FilterChip><FilterChip>최근 7일</FilterChip><FilterChip>장소</FilterChip></div>
-        <div className="mt-7 flex items-center justify-between"><p className="text-sm font-bold">{filtered.length}개의 물건</p><button className="text-sm font-medium text-muted-foreground">최신순 ▾</button></div>
-        {filtered.length>0?<div className="mt-3 grid gap-4 sm:grid-cols-2">{filtered.map(item=><ItemCard key={item.id} item={item} onClick={()=>setSelected(item)}/>)}</div>:<div className="mt-4 grid min-h-64 place-items-center rounded-[28px] border border-dashed border-[#cfd3e9] bg-white p-8 text-center"><div><Search className="mx-auto mb-3 size-9 text-[#7a82bd]"/><p className="font-bold">검색 결과가 없습니다</p><p className="mt-1 text-sm text-muted-foreground">장소나 색상을 다른 말로 검색해 보세요.</p></div></div>}
+        <div className="mt-7 flex items-center justify-between"><p className="text-sm font-bold">{section==="clues"?"내 단서":`${filtered.length}개의 물건`}</p>{section!=="clues"&&<span className="text-sm font-medium text-muted-foreground">최신순</span>}</div>
+        {filtered.length>0?<div className="mt-3 grid gap-4 sm:grid-cols-2">{filtered.map(item=><ItemCard key={item.id} item={item} onClick={()=>setSelected(item)}/>)}</div>:<div className="mt-4 grid min-h-64 place-items-center rounded-[28px] border border-dashed border-[#cfd3e9] bg-white p-8 text-center"><div>{section==="clues"?<Lightbulb className="mx-auto mb-3 size-9 text-[#d28700]"/>:<Search className="mx-auto mb-3 size-9 text-[#7a82bd]"/>}<p className="font-bold">{section==="mine"?"아직 작성한 글이 없습니다":section==="clues"?"아직 저장된 내 단서가 없습니다":"검색 결과가 없습니다"}</p><p className="mt-1 text-sm text-muted-foreground">{section==="all"?"장소나 색상을 다른 말로 검색해 보세요.":section==="mine"?"분실 신고나 습득물을 등록하면 여기에 표시됩니다.":"실제 찾기 단서 저장 기능을 연결하면 이곳에서 확인할 수 있습니다."}</p></div></div>}
       </section></main>
 
       <aside className="sticky top-[72px] hidden h-[calc(100vh-72px)] border-l border-[#e0e2ef] px-6 py-8 xl:block"><div className="mb-6 flex items-center justify-between"><h2 className="font-extrabold tracking-[-0.03em]">최근 찾기 단서</h2><Lightbulb className="size-5 text-[#d28700]"/></div><div className="space-y-3"><ClueCard title="검정색 무선 이어폰" text="도서관 반납대 옆에서 비슷한 케이스를 봤어요." time="8분 전"/><ClueCard title="은색 보온 물병" text="급식실에서 후관 쪽으로 옮겨진 것 같아요." time="35분 전"/><ClueCard title="투명 학생증 케이스" text="운동장 방송실 앞 계단에서 봤습니다." time="어제"/></div><button className="mt-4 flex w-full items-center justify-center gap-1 rounded-full py-2 text-sm font-bold text-[#4a56ba] hover:bg-[#f0f1ff]">단서 모두 보기<ChevronRight className="size-4"/></button><div className="mt-8 rounded-[26px] bg-[#1f265e] p-5 text-white shadow-[0_16px_30px_rgba(31,38,94,.14)]"><div className="mb-3 grid size-10 place-items-center rounded-2xl bg-white/12"><Megaphone className="size-5"/></div><p className="font-bold">사진 등록 전 확인해요</p><p className="mt-1 text-xs leading-relaxed text-[#d8dcff]">얼굴, 이름표, 전화번호가 보이지 않도록 가린 뒤 올려주세요.</p></div></aside>
     </div>
 
-    <nav className="fixed inset-x-0 bottom-0 z-40 grid h-[74px] grid-cols-4 border-t border-[#dfe2f1] bg-[#fbf9ff]/95 px-3 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden" aria-label="모바일 메뉴"><MobileLink icon={<Home/>} label="홈" active/>{userRole==="teacher"||userRole==="final_admin"?<MobileLink icon={<PackageCheck/>} label="인수 대기" onClick={()=>setHandoffOpen(true)}/>:<MobileLink icon={<Search/>} label="찾기"/>}<button className="relative flex flex-col items-center justify-center gap-1 text-xs font-bold text-[#4a56ba]" onClick={()=>setRegisterOpen(true)}><span className="absolute -top-5 grid size-14 place-items-center rounded-[20px] bg-[#4958c7] text-white shadow-[0_9px_20px_rgba(73,88,199,.32)]"><Plus className="size-7"/></span><span className="mt-9">등록</span></button><MobileLink icon={<CircleUserRound/>} label="내 정보" onClick={()=>setProfileOpen(true)}/></nav>
+    <nav className="fixed inset-x-0 bottom-0 z-40 grid h-[74px] grid-cols-4 border-t border-[#dfe2f1] bg-[#fbf9ff]/95 px-3 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden" aria-label="모바일 메뉴"><MobileLink icon={<Home/>} label="홈" active={section==="all"} onClick={()=>setSection("all")}/>{userRole==="teacher"||userRole==="final_admin"?<MobileLink icon={<PackageCheck/>} label="인수 대기" onClick={()=>setHandoffOpen(true)}/>:<MobileLink icon={<Search/>} label="찾기" onClick={()=>setSection("all")}/>}<button className="relative flex flex-col items-center justify-center gap-1 text-xs font-bold text-[#4a56ba]" onClick={requestRegistration}><span className="absolute -top-5 grid size-14 place-items-center rounded-[20px] bg-[#4958c7] text-white shadow-[0_9px_20px_rgba(73,88,199,.32)]"><Plus className="size-7"/></span><span className="mt-9">등록</span></button><MobileLink icon={<CircleUserRound/>} label="내 정보" onClick={()=>setProfileOpen(true)}/></nav>
 
     <Dialog open={!!selected} onOpenChange={open=>!open&&setSelected(null)}><DialogContent className="max-h-[88vh] overflow-y-auto rounded-[30px] border-[#dfe2f1] p-0 sm:max-w-[620px]">{selected&&<><div className={`relative grid h-52 place-items-center overflow-hidden rounded-t-[29px] bg-gradient-to-br ${tones[selected.tone]}`}><PackageOpen className="size-20 stroke-[1.25] opacity-80"/><span className="absolute left-5 top-5 rounded-full bg-white/75 px-3 py-1 text-xs font-extrabold backdrop-blur">{selected.kind==="lost"?"잃어버렸어요":"주인을 찾아요"}</span></div><div className="p-6 sm:p-7"><DialogHeader className="text-left"><div className="flex items-start justify-between gap-3"><DialogTitle className="text-2xl font-extrabold tracking-[-0.04em]">{selected.title}</DialogTitle><StatusBadge item={selected}/></div><DialogDescription className="sr-only">물건 상세 정보</DialogDescription></DialogHeader><div className="mt-5 grid gap-3 rounded-[22px] bg-[#f4f4fb] p-4 text-sm"><InfoRow icon={<MapPin/>} label="장소" value={selected.location}/><InfoRow icon={<Clock3/>} label="날짜" value={selected.date}/><InfoRow icon={<Tag/>} label="분류" value={`${selected.category}${selected.color?` · ${selected.color}`:""}`}/></div><p className="mt-5 text-[15px] leading-7 text-[#3f4254]">{selected.description}</p>{selected.kind==="lost"&&<div className="mt-6 rounded-[22px] border border-[#ead89b] bg-[#fff8dc] p-4"><div className="flex items-center gap-2 font-bold text-[#705600]"><Lightbulb className="size-4"/>찾기 단서 {selected.clueCount}개</div><p className="mt-2 text-sm leading-relaxed text-[#6c6041]">이 물건을 본 적이 있다면 장소와 시간을 알려주세요. 연락처는 적지 않아도 됩니다.</p><div className="mt-4 space-y-3">{demoClues.filter(clue=>clue.itemId===selected.id).map(clue=>{const rewarded=rewards.some(transaction=>transaction.uniqueKey===helpfulClueRewardKey(selected.id,clue.authorId));return <div key={clue.id} className="rounded-[18px] bg-white/85 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-extrabold text-[#4d4326]">익명의 학교 구성원</p><p className="mt-1 text-xs text-[#756a4a]">{clue.place} · {clue.seenAt}</p></div>{selected.isMine&&<Button size="sm" variant="outline" disabled={rewarded} className="shrink-0 rounded-full border-[#e0b946] bg-[#fff9e6] text-[#725700] hover:bg-[#ffefb2]" onClick={()=>markHelpful(clue)}><Award className="size-4"/>{rewarded?"지급 완료":"도움 됐어요"}</Button>}</div><p className="mt-2 text-sm leading-6 text-[#5f5537]">{clue.detail}</p></div>})}</div>{selected.isMine&&<p className="mt-3 text-xs text-[#786a41]">같은 학생이 이 신고에 여러 단서를 남겨도 포인트는 한 번만 지급됩니다.</p>}</div>}<DialogFooter className="mt-6 sm:justify-stretch">{selected.kind==="lost"?<Button className="h-12 flex-1 rounded-full bg-[#4958c7] hover:bg-[#3847b5]" onClick={()=>{setSelected(null);flash("찾기 단서를 남겼습니다.")}}><Lightbulb/>찾기 단서 남기기</Button>:<Button className="h-12 flex-1 rounded-full bg-[#4958c7] hover:bg-[#3847b5]" onClick={()=>{setSelected(null);flash("보관 장소를 확인했습니다.")}}><MapPin/>보관 장소 확인</Button>}<DialogClose asChild><Button variant="outline" className="h-12 rounded-full px-5">닫기</Button></DialogClose></DialogFooter></div></>}</DialogContent></Dialog>
 
@@ -373,20 +488,45 @@ export default function LostFoundApp() {
         <DialogHeader className="text-left"><DialogTitle className="text-2xl font-extrabold tracking-[-0.04em]">물건 등록하기</DialogTitle><DialogDescription>{isFirebaseConfigured?"학교 계정으로 등록한 내용과 사진이 안전하게 저장됩니다.":"Firebase 설정 전에는 시연 목록에만 추가됩니다."}</DialogDescription></DialogHeader>
         <div className="grid grid-cols-2 gap-2 rounded-[18px] bg-[#eff0f7] p-1.5"><button type="button" onClick={()=>setNewKind("lost")} className={`h-11 rounded-[14px] text-sm font-bold transition ${newKind==="lost"?"bg-white text-[#3544aa] shadow-sm":"text-muted-foreground"}`}>잃어버렸어요</button><button type="button" onClick={()=>setNewKind("found")} className={`h-11 rounded-[14px] text-sm font-bold transition ${newKind==="found"?"bg-white text-[#3544aa] shadow-sm":"text-muted-foreground"}`}>주인을 찾아요</button></div>
         <form action={addDemoItem} className="space-y-4">
-          <label className="block text-sm font-bold">물건 이름<Input required name="title" placeholder="예: 검정색 무선 이어폰" className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/></label>
-          <label className="block text-sm font-bold">마지막으로 본 장소<Input required name="location" placeholder="자유롭게 입력하세요" className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/></label>
-          <label className="block text-sm font-bold">특징<Textarea name="description" placeholder="색상, 모양, 눈에 띄는 특징을 적어주세요" className="mt-2 min-h-24 rounded-[16px] bg-[#f8f8fd]"/></label>
+          <label className="block text-sm font-bold">물건 이름<Input required name="title" aria-invalid={Boolean(formErrors.title)} placeholder="예: 검정색 무선 이어폰" className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/>{formErrors.title&&<span className="mt-1.5 block text-xs text-[#a33e3e]">{formErrors.title}</span>}</label>
+          <label className="block text-sm font-bold">마지막으로 본 장소<Input required name="location" aria-invalid={Boolean(formErrors.location)} placeholder="모르면 ‘모름’이라고 입력하세요" className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/>{formErrors.location&&<span className="mt-1.5 block text-xs text-[#a33e3e]">{formErrors.location}</span>}</label>
+          <label className="block text-sm font-bold">날짜<Input required name="date" type="date" aria-invalid={Boolean(formErrors.date)} className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/>{formErrors.date&&<span className="mt-1.5 block text-xs text-[#a33e3e]">{formErrors.date}</span>}</label>
+          <label className="block text-sm font-bold">특징 <span className="font-medium text-muted-foreground">(선택)</span><Textarea name="description" placeholder="색상, 모양, 눈에 띄는 특징을 적어주세요" className="mt-2 min-h-24 rounded-[16px] bg-[#f8f8fd]"/></label>
           <div className="rounded-[20px] border border-dashed border-[#aeb4da] bg-[#f7f7ff] p-3">
+            <p className="mb-2 text-sm font-bold text-[#4c527a]">사진 <span className="font-medium text-muted-foreground">(선택)</span></p>
             {photoPreview?<div className="relative overflow-hidden rounded-[16px]"><img src={photoPreview} alt="선택한 사진 미리보기" className="h-48 w-full object-cover"/><button type="button" onClick={clearPhoto} className="absolute right-2 top-2 z-10 grid size-10 place-items-center rounded-full bg-[#202557]/85 text-white shadow-lg" aria-label="선택한 사진 삭제"><X className="size-5"/></button></div>:<div className="grid min-h-28 place-items-center text-center text-[#686f9e]"><div>{photoBusy?<LoaderCircle className="mx-auto size-7 animate-spin"/>:<ImagePlus className="mx-auto size-7"/>}<p className="mt-2 text-sm font-bold">물건 사진을 추가해 주세요</p><p className="mt-1 text-xs">등록 전에 화면에서 확인할 수 있어요</p></div></div>}
             <div className="mt-3 grid grid-cols-2 gap-2"><label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-full border border-[#c9cde5] bg-white text-sm font-bold text-[#4652ad] hover:bg-[#eef0ff]"><ImagePlus className="size-4"/>사진 업로드<input type="file" accept="image/*" className="sr-only" disabled={photoBusy||registerBusy} onChange={handlePhotoSelected}/></label><label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-[#4958c7] text-sm font-bold text-white hover:bg-[#3847b5]"><Camera className="size-4"/>바로 촬영<input type="file" accept="image/*" capture="environment" className="sr-only" disabled={photoBusy||registerBusy} onChange={handlePhotoSelected}/></label></div>
           </div>
           <div className="rounded-[16px] bg-[#fff6d8] px-4 py-3 text-xs leading-relaxed text-[#66552a]">얼굴·이름표·학생증·전화번호가 보이지 않는지 확인해 주세요. 사진은 업로드 전에 자동으로 적당한 크기로 줄어듭니다.</div>
+          {registerError&&<p role="alert" className="rounded-[16px] bg-[#fff0f0] px-4 py-3 text-sm font-bold leading-5 text-[#9a3e3e]">{registerError}</p>}
           <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={registerBusy} className="h-12 rounded-full">취소</Button></DialogClose><Button type="submit" disabled={registerBusy||photoBusy} className="h-12 rounded-full bg-[#4958c7] px-7 hover:bg-[#3847b5]">{registerBusy?<><LoaderCircle className="size-4 animate-spin"/>사진 저장 중</>:"등록하기"}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
 
-    <Dialog open={noticeOpen} onOpenChange={setNoticeOpen}><DialogContent className="rounded-[30px] border-[#dfe2f1] sm:max-w-[500px]"><DialogHeader className="text-left"><DialogTitle className="text-2xl font-extrabold tracking-[-0.04em]">알림</DialogTitle><DialogDescription>내 글과 관련된 새 소식입니다.</DialogDescription></DialogHeader><div className="space-y-2"><Notice icon={<Award/>} title="도움 포인트 3점을 받았어요" text="습득물을 선생님께 전달한 활동이 확인되었습니다." tone="reward"/><Notice icon={<Lightbulb/>} title="새로운 찾기 단서가 도착했어요" text="검정색 무선 이어폰 · 도서관 반납대 근처"/><Notice icon={<PackageCheck/>} title="습득물을 선생님이 인수했어요" text="회색 체육복 상의 · 체육교무실 보관"/><Notice icon={<Eye/>} title="비슷한 습득물이 등록되었어요" text="은색 보온 물병과 색상·장소가 비슷해요"/></div></DialogContent></Dialog>
+    <Dialog open={notificationAdminOpen} onOpenChange={setNotificationAdminOpen}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto rounded-[30px] border-[#dfe2f1] sm:max-w-[620px]">
+        <DialogHeader className="text-left"><DialogTitle className="flex items-center gap-2 text-2xl font-extrabold tracking-[-0.04em]"><Megaphone className="size-6 text-[#4a56ba]"/>발송 알림 관리</DialogTitle><DialogDescription>잘못 전달된 알림은 삭제하지 않고 취소 기록을 남깁니다.</DialogDescription></DialogHeader>
+        <div className="space-y-3">{adminNotifications.length>0?adminNotifications.map(notification=><div key={notification.id} className={`rounded-[20px] border p-4 ${notification.status==="cancelled"?"border-[#dedfe6] bg-[#f5f5f7]":"border-[#dfe2f1] bg-white"}`}><div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><p className="font-extrabold">{notification.status==="cancelled"?"취소됨 · ":""}{notification.title}</p><p className="mt-1 text-sm text-muted-foreground">{notification.message}</p><p className="mt-2 break-all text-xs text-muted-foreground">수신 계정 ID: {notification.userId}</p></div>{notification.status==="active"&&<Button variant="outline" className="rounded-full border-[#d7a9a9] text-[#9a3e3e] hover:bg-[#fff0f0]" onClick={()=>cancelSentNotification(notification)}><RotateCcw className="size-4"/>알림 취소</Button>}</div></div>):<div className="rounded-[20px] bg-[#f5f5fc] p-8 text-center text-sm text-muted-foreground">아직 실제로 발송된 알림이 없습니다.</div>}</div>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={teacherCodeOpen} onOpenChange={open=>{if(!teacherCodeBusy){setTeacherCodeOpen(open);setTeacherCodeError("")}}}>
+      <DialogContent className="rounded-[30px] border-[#dfe2f1] sm:max-w-[500px]">
+        <DialogHeader className="text-left">
+          <DialogTitle className="flex items-center gap-2 text-2xl font-extrabold tracking-[-0.04em]"><KeyRound className="size-6 text-[#4a56ba]"/>{userRole==="final_admin"?"교사 인증코드 설정":"교사 인증"}</DialogTitle>
+          <DialogDescription>{userRole==="final_admin"?"8~32자의 새 코드를 정하고 교직원에게만 전달하세요. 기존에 인증한 교사의 권한은 유지됩니다.":"학교에서 안내받은 교사 인증코드를 한 번만 입력하세요."}</DialogDescription>
+        </DialogHeader>
+        <form action={submitTeacherCode} className="space-y-4">
+          <label className="block text-sm font-bold">{userRole==="final_admin"?"새 인증코드":"교사 인증코드"}<Input required minLength={8} maxLength={32} name="teacherCode" type="password" autoComplete="new-password" placeholder="8~32자 입력" className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]" aria-describedby="teacher-code-help teacher-code-error"/></label>
+          <p id="teacher-code-help" className="rounded-[16px] bg-[#f1f2ff] px-4 py-3 text-xs leading-5 text-[#555e9d]">인증코드 원문은 저장하지 않습니다. 변환된 값만 비공개 설정에 보관하고 서버 보안 규칙에서 확인합니다.</p>
+          {teacherCodeError&&<p id="teacher-code-error" role="alert" className="rounded-[16px] bg-[#fff0f0] px-4 py-3 text-sm font-bold text-[#9a3e3e]">{teacherCodeError}</p>}
+          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={teacherCodeBusy} className="h-12 rounded-full">취소</Button></DialogClose><Button type="submit" disabled={teacherCodeBusy} className="h-12 rounded-full bg-[#4958c7] px-6 hover:bg-[#3847b5]">{teacherCodeBusy?<><LoaderCircle className="size-4 animate-spin"/>확인 중</>:userRole==="final_admin"?"코드 설정":"교사 인증"}</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={noticeOpen} onOpenChange={setNoticeOpen}><DialogContent className="rounded-[30px] border-[#dfe2f1] sm:max-w-[500px]"><DialogHeader className="text-left"><DialogTitle className="text-2xl font-extrabold tracking-[-0.04em]">알림</DialogTitle><DialogDescription>읽지 않은 소식은 확인할 때까지 여기에 남아 있습니다.</DialogDescription></DialogHeader><div className="space-y-2">{notifications.length>0?notifications.map(notification=><Notice key={notification.id} icon={<PackageCheck/>} title={notification.status==="cancelled"?"취소된 안내입니다":notification.title} text={notification.status==="cancelled"?"관리자가 잘못 전달된 안내를 취소했습니다.":notification.message} read={notification.read} cancelled={notification.status==="cancelled"} onClick={()=>openNotification(notification)}/>):<div className="rounded-[20px] bg-[#f5f5fc] p-8 text-center"><Bell className="mx-auto size-8 text-[#8a8fad]"/><p className="mt-3 font-bold">새 알림이 없습니다</p><p className="mt-1 text-xs leading-5 text-muted-foreground">내 글의 상태가 바뀌면 이곳에 계속 보관됩니다.</p></div>}</div></DialogContent></Dialog>
     {toast&&<div role="status" className="fixed bottom-24 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full bg-[#202557] px-5 py-3 text-sm font-bold text-white shadow-xl lg:bottom-8"><Check className="size-4"/>{toast}</div>}
   </div>;
 }
@@ -404,6 +544,6 @@ function HandoffCard({handoff,onConfirm}:{handoff:PendingHandoff;onConfirm:(hand
   async function submit(){setBusy(true);try{await onConfirm(handoff,storageLocation);}finally{setBusy(false);}}
   return <div className="rounded-[22px] border border-[#e1e3f0] bg-white p-4"><p className="font-extrabold">{handoff.title}</p><p className="mt-1 text-sm text-muted-foreground"><MapPin className="mr-1 inline size-4"/>습득 장소: {handoff.location}</p><p className="mt-2 text-xs text-muted-foreground">등록 학생의 이름과 이메일은 공개하지 않습니다.</p>{handoff.persisted&&<label className="mt-4 block text-sm font-bold">보관 장소<Input value={storageLocation} onChange={event=>setStorageLocation(event.target.value)} placeholder="예: 1층 교무실 분실물 보관함" className="mt-2 h-11 rounded-[14px] bg-[#f8f8fd]"/></label>}<Button disabled={handoff.received||busy} onClick={submit} className="mt-4 w-full rounded-full bg-[#4958c7] hover:bg-[#3847b5]"><PackageCheck className="size-4"/>{busy?"처리 중":handoff.received?"인수 완료":handoff.persisted?"인수 확인 및 공개":"인수 확인 및 3점 지급"}</Button></div>
 }
-function Notice({icon,title,text,tone="default"}:{icon:React.ReactNode;title:string;text:string;tone?:"default"|"reward"}){return <button className={`flex w-full items-start gap-3 rounded-[20px] p-4 text-left ${tone==="reward"?"bg-[#fff8dc] hover:bg-[#fff2ba]":"bg-[#f5f5fc] hover:bg-[#eeeff9]"}`}><span className={`grid size-10 shrink-0 place-items-center rounded-2xl [&>svg]:size-5 ${tone==="reward"?"bg-[#ffe17c] text-[#745400]":"bg-[#e0e3ff] text-[#4553b8]"}`}>{icon}</span><span className="min-w-0"><span className="flex items-center gap-2 text-sm font-extrabold">{title}<span className="size-2 rounded-full bg-[#e33f65]"/></span><span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{text}</span></span></button>}
+function Notice({icon,title,text,read=false,cancelled=false,onClick}:{icon:React.ReactNode;title:string;text:string;read?:boolean;cancelled?:boolean;onClick?:()=>void}){return <button onClick={onClick} className={`flex w-full items-start gap-3 rounded-[20px] p-4 text-left ${cancelled?"bg-[#f1f1f4] text-[#777986]":read?"bg-[#f7f7fb]":"bg-[#eef0ff] hover:bg-[#e5e8ff]"}`}><span className={`grid size-10 shrink-0 place-items-center rounded-2xl [&>svg]:size-5 ${cancelled?"bg-[#e1e1e5] text-[#777986]":"bg-[#e0e3ff] text-[#4553b8]"}`}>{icon}</span><span className="min-w-0"><span className="flex items-center gap-2 text-sm font-extrabold">{title}{!read&&!cancelled&&<span className="size-2 rounded-full bg-[#e33f65]"/>}</span><span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{text}</span></span></button>}
 
 function RewardBadgeCard({badge}:{badge:{name:string;description:string;earned:boolean}}){return <div className={`rounded-[20px] border p-4 text-center ${badge.earned?"border-[#e4c35a] bg-[#fff8dc]":"border-[#e1e2e8] bg-[#f6f6f8] opacity-65"}`}><span className={`mx-auto grid size-11 place-items-center rounded-full ${badge.earned?"bg-[#ffe17c] text-[#765600]":"bg-[#e2e2e6] text-[#777985]"}`}>{badge.name==="분실물 해결사"?<Trophy className="size-5"/>:<Award className="size-5"/>}</span><p className="mt-3 text-sm font-extrabold">{badge.name}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{badge.earned?"획득 완료":badge.description}</p></div>}

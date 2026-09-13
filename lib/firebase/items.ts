@@ -5,7 +5,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
-  updateDoc,
+  writeBatch,
   where,
   type DocumentData,
   type Firestore,
@@ -49,6 +49,7 @@ type CreateItemInput = {
   description: string;
   authorId: string;
   imageDataUrl?: string;
+  dateText: string;
 };
 
 function toStoredItem(snapshot: QueryDocumentSnapshot<DocumentData>): StoredItem {
@@ -78,32 +79,57 @@ function toStoredItem(snapshot: QueryDocumentSnapshot<DocumentData>): StoredItem
 export function subscribeToPublishedItems(
   db: Firestore,
   canReviewPending: boolean,
+  userId: string,
   onItems: (items: StoredItem[]) => void,
   onError: (error: Error) => void,
 ): Unsubscribe {
-  const itemsQuery = canReviewPending
-    ? query(collection(db, "items"))
-    : query(collection(db, "items"), where("isPublished", "==", true));
+  const publish = (groups: StoredItem[][]) => {
+    const merged = new Map<string, StoredItem>();
+    groups.flat().forEach(item => merged.set(item.id, item));
+    onItems([...merged.values()].sort((a, b) => b.id.localeCompare(a.id)));
+  };
 
-  return onSnapshot(
-    itemsQuery,
-    (snapshot) => {
-      const items = snapshot.docs
-        .map(toStoredItem)
-        .sort((a, b) => b.id.localeCompare(a.id));
-      onItems(items);
+  if (canReviewPending) {
+    return onSnapshot(
+      query(collection(db, "items")),
+      snapshot => publish([snapshot.docs.map(toStoredItem)]),
+      onError,
+    );
+  }
+
+  let publishedItems: StoredItem[] = [];
+  let ownItems: StoredItem[] = [];
+  const unsubscribePublished = onSnapshot(
+    query(collection(db, "items"), where("isPublished", "==", true)),
+    snapshot => {
+      publishedItems = snapshot.docs.map(toStoredItem);
+      publish([publishedItems, ownItems]);
     },
     onError,
   );
+  const unsubscribeOwn = onSnapshot(
+    query(collection(db, "items"), where("authorId", "==", userId)),
+    snapshot => {
+      ownItems = snapshot.docs.map(toStoredItem);
+      publish([publishedItems, ownItems]);
+    },
+    onError,
+  );
+  return () => {
+    unsubscribePublished();
+    unsubscribeOwn();
+  };
 }
 
 export async function confirmItemHandoff(
   db: Firestore,
   itemId: string,
   teacherId: string,
+  recipientId: string,
   storageLocation: string,
 ) {
-  await updateDoc(doc(db, "items", itemId), {
+  const batch = writeBatch(db);
+  batch.update(doc(db, "items", itemId), {
     status: "teacher_received",
     isPublished: true,
     storageLocation: storageLocation.trim(),
@@ -111,6 +137,20 @@ export async function confirmItemHandoff(
     receivedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  const notificationRef = doc(collection(db, "notifications"));
+  batch.set(notificationRef, {
+    userId: recipientId,
+    type: "found_item_received",
+    title: "등록한 습득물을 선생님이 인수했어요",
+    message: `보관 장소: ${storageLocation.trim()}`,
+    itemId,
+    read: false,
+    status: "active",
+    createdBy: teacherId,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  await batch.commit();
 }
 
 export async function createItem(
@@ -125,7 +165,7 @@ export async function createItem(
     category: "기타",
     color: "",
     location: input.location.trim(),
-    dateText: "오늘",
+    dateText: input.dateText,
     description: input.description.trim(),
     authorId: input.authorId,
     status: isLost ? "seeking" : "pending_handoff",
