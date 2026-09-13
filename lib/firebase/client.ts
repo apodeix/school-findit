@@ -16,8 +16,7 @@ export const schoolEmailDomain =
   process.env.NEXT_PUBLIC_SCHOOL_EMAIL_DOMAIN?.trim().toLowerCase() ?? "";
 
 export const isFirebaseConfigured =
-  Object.values(firebaseConfig).every((value) => Boolean(value?.trim())) &&
-  Boolean(schoolEmailDomain);
+  Object.values(firebaseConfig).every((value) => Boolean(value?.trim()));
 
 type FirebaseServices = {
   app: FirebaseApp;
@@ -46,7 +45,10 @@ export function getFirebaseServices(): FirebaseServices {
 }
 
 export function isAllowedSchoolEmail(email: string | null): boolean {
-  if (!email || !schoolEmailDomain) return false;
+  if (!email) return false;
+  // 학교 도메인을 확정하기 전에는 Firestore의 비공개 허용 계정 규칙이
+  // 실제 데이터 접근을 통제한다.
+  if (!schoolEmailDomain) return true;
   const [, domain, ...rest] = email.toLowerCase().split("@");
   return rest.length === 0 && domain === schoolEmailDomain;
 }

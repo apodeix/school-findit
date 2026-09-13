@@ -49,6 +49,11 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // 도움 포인트 지급과 취소는 향후 서버 또는 Cloud Function에서만 처리한다.
+    match /reward_transactions/{transactionId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
