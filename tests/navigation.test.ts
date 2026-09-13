@@ -19,3 +19,12 @@ test("교사 인증 버튼은 내 정보 안에만 한 번 표시한다", () => 
   const end = source.indexOf("</Modal>", profile);
   assert.ok(profile >= 0 && button > profile && button < end);
 });
+
+test("교사 메뉴를 구분하고 상단 등록은 데스크톱에서만 표시한다", () => {
+  assert.ok(source.includes('aria-label="교사 메뉴"'));
+  assert.ok(source.includes('{teacher && (\n            <section'));
+  const register = source.indexOf("물건 등록\n");
+  const button = source.slice(source.lastIndexOf("<Button", register), register);
+  assert.ok(button.includes("lg:flex"));
+  assert.equal(button.includes("sm:flex"), false);
+});

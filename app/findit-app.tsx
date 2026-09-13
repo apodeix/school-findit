@@ -482,7 +482,7 @@ export default function FinditApp() {
       <div className="mx-auto grid max-w-[1440px] lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)_280px]">
         <aside className="sticky top-[72px] hidden h-[calc(100vh-72px)] border-r border-[#e0e2ef] px-5 py-7 lg:flex lg:flex-col">
           <nav className="space-y-1" aria-label="주요 메뉴">
-            {nav.map((n) => (
+            {nav.filter((n) => n.key !== "handoff" && n.key !== "manage").map((n) => (
               <button
                 key={n.key}
                 onClick={() => navigate(n.key)}
@@ -492,12 +492,30 @@ export default function FinditApp() {
                 {n.label}
               </button>
             ))}
+          </nav>
+          {teacher && (
+            <section className="mt-6 border-t border-[#e0e2ef] pt-5" aria-labelledby="teacher-menu-heading">
+              <h2 id="teacher-menu-heading" className="mb-2 px-3 text-sm font-bold text-muted-foreground">교사 메뉴</h2>
+              <nav className="space-y-1" aria-label="교사 메뉴">
+                {nav.filter((n) => n.key === "handoff" || n.key === "manage").map((n) => (
+                  <button
+                    key={n.key}
+                    onClick={() => navigate(n.key)}
+                    aria-current={section === n.key ? "page" : undefined}
+                    className={`flex min-h-12 w-full items-center gap-3 rounded-2xl px-3 text-left text-sm font-bold [&_svg]:size-5 ${section === n.key ? "bg-[#e0e3ff] text-[#3544aa]" : "hover:bg-[#eff0f8]"}`}
+                  >
+                    {n.icon}
+                    {n.label}
+                  </button>
+                ))}
+              </nav>
+            </section>
+          )}
             <div className="mt-6 rounded-3xl bg-[#fff5d0] p-4 text-sm leading-6 text-[#68521c]">
               물건을 주웠나요?
               <br />
               등록 후 선생님께 전달하면 학교 친구에게 안전하게 돌아갈 수 있어요.
             </div>
-          </nav>
         </aside>
         <main className="min-w-0 space-y-5 px-4 pb-28 pt-6 sm:px-7 sm:pt-8 lg:px-9 lg:pb-12">
           {!user ? (
@@ -540,7 +558,7 @@ export default function FinditApp() {
                     {["all", "mine"].includes(section) && (
                       <div className="flex flex-wrap gap-2">
                         <Button
-                          className="hidden h-12 shrink-0 rounded-full px-5 shadow-[0_8px_22px_rgba(73,88,199,.25)] sm:flex"
+                          className="hidden h-12 shrink-0 rounded-full px-5 shadow-[0_8px_22px_rgba(73,88,199,.25)] lg:flex"
                           onClick={requestRegistration}
                         >
                           <Plus />
