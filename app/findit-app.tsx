@@ -1,6 +1,9 @@
 "use client";
 import { DemoPreview } from "./demo-preview";
 import { BrandMark } from "@/components/brand-mark";
+function MobileTab({ icon, label, active, onClick }: { icon: ReactNode; label: string; active?: boolean; onClick: () => void }) {
+  return <button onClick={onClick} aria-current={active ? "page" : undefined} className={`flex flex-col items-center justify-center gap-1 text-sm font-bold ${active ? "text-[#4251b8]" : "text-[#73768a]"}`}><span className={`grid h-8 w-14 place-items-center rounded-full [&>svg]:size-5 ${active ? "bg-[#e0e3ff]" : ""}`}>{icon}</span>{label}</button>;
+}
 import {
   useCallback,
   useEffect,
@@ -127,6 +130,7 @@ export default function FinditApp() {
       null,
     );
   const [noticesOpen, setNoticesOpen] = useState(false),
+    [profileOpen, setProfileOpen] = useState(false),
     [prompt, setPrompt] = useState<Prompt | null>(null),
     [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false),
@@ -137,12 +141,16 @@ export default function FinditApp() {
     pendingRefresh = useRef(false);
   const searchInput = useRef<HTMLInputElement>(null);
   const [searchFocus, setSearchFocus] = useState(0);
+  const [searchMode, setSearchMode] = useState(false);
   useEffect(() => {
-    if (searchFocus && section === "all") {
-      searchInput.current?.scrollIntoView({ block: "center", behavior: "instant" });
+    if (searchMode && searchFocus && section === "all") {
+      searchInput.current?.scrollIntoView({
+        block: "center",
+        behavior: "instant",
+      });
       searchInput.current?.focus({ preventScroll: true });
     }
-  }, [searchFocus, section]);
+  }, [searchFocus, section, searchMode]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 6000);
@@ -195,6 +203,8 @@ export default function FinditApp() {
       setClueEditor(null);
       setPrompt(null);
       setNoticesOpen(false);
+      setProfileOpen(false);
+      setSearchMode(false);
       setError("");
       if (!current) {
         setLoading(false);
@@ -266,6 +276,13 @@ export default function FinditApp() {
     );
   });
   function navigate(next: Section) {
+    if (next === "profile") {
+      if (user) setProfileOpen(true);
+      else void login();
+      return;
+    }
+    setProfileOpen(false);
+    setSearchMode(false);
     setSection(next);
     setKind("all");
     setQuery("");
@@ -276,6 +293,13 @@ export default function FinditApp() {
     setRecent(false);
     setActive(false);
     setManagement(null);
+  }
+  function requestRegistration() {
+    if (!user) {
+      void login();
+      return;
+    }
+    setEditor("lost");
   }
   async function login() {
     setBusy(true);
@@ -394,18 +418,20 @@ export default function FinditApp() {
       : []),
   ];
   return (
-    <div className="min-h-screen pb-28 lg:pb-10">
-      <header className="sticky top-0 z-30 border-b border-[#e2e4f1] bg-[#f9f9ff]/95 backdrop-blur">
-        <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-3 px-4 py-3 lg:px-8">
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="sticky top-0 z-40 border-b border-[#dfe2f3] bg-[#fbf9ff]/90 backdrop-blur-xl">
+        <div className="mx-auto flex h-[72px] max-w-[1440px] items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
           <button
             className="flex items-center gap-3 text-left"
             onClick={() => navigate("all")}
             aria-label="어디 있니? 전체 물건"
           >
             <BrandMark />
-            <span>
-              <span className="block text-xl font-extrabold">어디 있니?</span>
-              <span className="block text-sm text-muted-foreground">
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className="whitespace-nowrap text-[1.28rem] font-extrabold tracking-[-0.055em] sm:text-[1.45rem]">
+                어디 있니?
+              </span>
+              <span className="hidden text-sm text-muted-foreground sm:inline">
                 우리 학교 분실물 찾기
               </span>
             </span>
@@ -453,9 +479,9 @@ export default function FinditApp() {
           </div>
         </div>
       </header>
-      <div className="mx-auto grid max-w-[1480px] gap-7 px-4 pt-6 lg:grid-cols-[200px_minmax(0,1fr)] lg:px-8 xl:grid-cols-[200px_minmax(0,1fr)_260px]">
-        <aside className="hidden lg:block">
-          <nav className="sticky top-28 space-y-2">
+      <div className="mx-auto grid max-w-[1440px] lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)_280px]">
+        <aside className="sticky top-[72px] hidden h-[calc(100vh-72px)] border-r border-[#e0e2ef] px-5 py-7 lg:flex lg:flex-col">
+          <nav className="space-y-1" aria-label="주요 메뉴">
             {nav.map((n) => (
               <button
                 key={n.key}
@@ -466,15 +492,6 @@ export default function FinditApp() {
                 {n.label}
               </button>
             ))}
-            {user && (admin || !teacher) && (
-              <button
-                onClick={codeDialog}
-                className="flex min-h-12 items-center gap-3 px-3 text-sm font-bold"
-              >
-                <KeyRound className="size-5" />
-                {admin ? "교사 인증코드 설정" : "교사 인증"}
-              </button>
-            )}
             <div className="mt-6 rounded-3xl bg-[#fff5d0] p-4 text-sm leading-6 text-[#68521c]">
               물건을 주웠나요?
               <br />
@@ -482,9 +499,13 @@ export default function FinditApp() {
             </div>
           </nav>
         </aside>
-        <main className="min-w-0 space-y-5">
+        <main className="min-w-0 space-y-5 px-4 pb-28 pt-6 sm:px-7 sm:pt-8 lg:px-9 lg:pb-12">
           {!user ? (
-            <DemoPreview onLogin={login} disabled={busy || !isFirebaseConfigured}/>
+            <DemoPreview
+              onLogin={login}
+              disabled={busy || !isFirebaseConfigured}
+              searchFocus={searchMode ? searchFocus : 0}
+            />
           ) : (
             <>
               {error && (
@@ -512,24 +533,18 @@ export default function FinditApp() {
                 <>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <h1 className="text-2xl font-extrabold">
-                      {nav.find((n) => n.key === section)?.label}
+                      {section === "all"
+                        ? "잃어버린 물건을 찾아보세요"
+                        : nav.find((n) => n.key === section)?.label}
                     </h1>
                     {["all", "mine"].includes(section) && (
                       <div className="flex flex-wrap gap-2">
                         <Button
-                          className="h-11 rounded-full"
-                          onClick={() => setEditor("lost")}
+                          className="hidden h-12 shrink-0 rounded-full px-5 shadow-[0_8px_22px_rgba(73,88,199,.25)] sm:flex"
+                          onClick={requestRegistration}
                         >
                           <Plus />
-                          잃어버렸어요
-                        </Button>
-                        <Button
-                          variant="outline"
-                          className="h-11 rounded-full"
-                          onClick={() => setEditor("found")}
-                        >
-                          <PackageCheck />
-                          주인을 찾아요
+                          물건 등록
                         </Button>
                       </div>
                     )}
@@ -636,7 +651,7 @@ export default function FinditApp() {
                       <p className="text-sm text-muted-foreground">
                         {filtered.length}개 · 최신 등록순
                       </p>
-                      <div className="grid gap-4 2xl:grid-cols-2">
+                      <div className="grid gap-4 sm:grid-cols-2">
                         {filtered.map((i) => (
                           <ItemCard
                             key={i.id}
@@ -686,8 +701,12 @@ export default function FinditApp() {
                       )}
                     </div>
                   )}
-                  {section === "profile" && (
-                    <>
+                  {profileOpen && (
+                    <Modal
+                      onClose={() => setProfileOpen(false)}
+                      title="내 정보 · 도움 포인트"
+                      description="본인의 활동과 계정 설정을 확인하세요."
+                    >
                       <div className={panel}>
                         <p className="break-all font-bold">{user.email}</p>
                         <p className="mt-2 text-sm">
@@ -695,6 +714,20 @@ export default function FinditApp() {
                           표시됩니다.
                         </p>
                         <div className="mt-4 flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            className="rounded-full"
+                            onClick={() => navigate("mine")}
+                          >
+                            내가 쓴 글
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="rounded-full"
+                            onClick={() => navigate("clues")}
+                          >
+                            내가 남긴 단서
+                          </Button>
                           {(admin || !teacher) && (
                             <Button
                               variant="outline"
@@ -768,7 +801,7 @@ export default function FinditApp() {
                       </div>
                       <h2 className="text-lg font-bold">포인트 활동 내역</h2>
                       <RewardList rewards={data.rewards} />
-                    </>
+                    </Modal>
                   )}
                   {section === "manage" && teacher && (
                     <>
@@ -891,13 +924,6 @@ export default function FinditApp() {
                           {admin && (
                             <>
                               <ManageGroup title="교사 권한 관리">
-                                <Button
-                                  onClick={codeDialog}
-                                  className="rounded-full"
-                                >
-                                  <KeyRound />
-                                  교사 인증코드 변경
-                                </Button>
                                 {management.users.map((u) => (
                                   <div key={u.id} className={panel}>
                                     <p className="break-all font-bold">
@@ -1015,8 +1041,8 @@ export default function FinditApp() {
             </>
           )}
         </main>
-        <aside className="hidden xl:block">
-          <div className="sticky top-28 space-y-4">
+        <aside className="sticky top-[72px] hidden h-[calc(100vh-72px)] border-l border-[#e0e2ef] px-6 py-8 xl:block">
+          <div className="space-y-4">
             <h2 className="flex items-center gap-2 text-lg font-extrabold">
               <Lightbulb className="text-[#b07a00]" />
               최근 찾기 단서
@@ -1049,30 +1075,46 @@ export default function FinditApp() {
           </div>
         </aside>
       </div>
-      {user && (
-        <nav className="fixed bottom-0 left-0 right-0 z-30 grid grid-cols-4 border-t bg-white px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 lg:hidden">
-          {nav.slice(0, 4).map((n) => (
-            <button
-              key={n.key}
-              onClick={() => {
-                navigate(n.key);
-                if (n.key === "all") setSearchFocus(value => value + 1);
-              }}
-              aria-current={section === n.key ? "page" : undefined}
-              className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-2xl text-sm [&_svg]:size-5 ${section === n.key ? "bg-[#e0e3ff] text-[#3544aa]" : "text-muted-foreground"}`}
-            >
-              {n.key === "all" ? <Search /> : n.icon}
-              {n.key === "all"
-                ? "찾기"
-                : n.key === "mine"
-                  ? "내 글"
-                  : n.key === "clues"
-                    ? "내 단서"
-                    : "내 정보"}
-            </button>
-          ))}
-        </nav>
-      )}
+      <nav
+        className="fixed inset-x-0 bottom-0 z-40 grid h-[74px] grid-cols-4 border-t border-[#dfe2f1] bg-[#fbf9ff]/95 px-3 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden"
+        aria-label="모바일 메뉴"
+      >
+        <MobileTab
+          icon={<Home />}
+          label="홈"
+          active={section === "all" && !searchMode}
+          onClick={() => {
+            navigate("all");
+            window.scrollTo({ top: 0 });
+          }}
+        />
+        <MobileTab
+          icon={<Search />}
+          label="찾기"
+          active={section === "all" && searchMode}
+          onClick={() => {
+            navigate("all");
+            setSearchMode(true);
+            setSearchFocus((value) => value + 1);
+          }}
+        />
+        <button
+          className="relative flex flex-col items-center justify-center gap-1 text-sm font-bold text-[#4a56ba]"
+          onClick={requestRegistration}
+          aria-label="물건 등록"
+        >
+          <span className="absolute -top-5 grid size-14 place-items-center rounded-[20px] bg-[#4958c7] text-white shadow-[0_9px_20px_rgba(73,88,199,.32)]">
+            <Plus className="size-7" />
+          </span>
+          <span className="mt-9">등록</span>
+        </button>
+        <MobileTab
+          icon={<CircleUserRound />}
+          label="내 정보"
+          active={profileOpen}
+          onClick={() => (user ? navigate("profile") : void login())}
+        />
+      </nav>
       <Modal
         open={Boolean(selectedId)}
         onClose={() => setSelectedId(null)}

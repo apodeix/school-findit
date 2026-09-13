@@ -129,7 +129,7 @@ function Actions({
 
 export function ItemEditor({
   item,
-  kind,
+  kind: initialKind,
   teacher,
   user,
   onClose,
@@ -142,6 +142,7 @@ export function ItemEditor({
   onClose: () => void;
   onSave: Save;
 }) {
+  const [kind, setKind] = useState(initialKind);
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [photoBusy, setPhotoBusy] = useState(Boolean(item?.hasImage)),
@@ -215,15 +216,14 @@ export function ItemEditor({
       onClose={() => {
         if (!busy) onClose();
       }}
-      title={
-        item ? "글 수정" : kind === "lost" ? "잃어버렸어요" : "주인을 찾아요"
-      }
+      title={item ? "글 수정" : "물건 등록하기"}
       description={
         kind === "found" && !teacher
           ? "등록 후 물건을 선생님께 전달하세요. 인수 확인 전에는 다른 학생에게 공개되지 않습니다."
           : "필수 항목만 입력해도 등록할 수 있어요. 소유권 확인에 쓸 세부 특징은 일부 남겨 두세요."
       }
     >
+      {!item && <div className="grid grid-cols-2 gap-2 rounded-[18px] bg-[#eff0f7] p-1.5" aria-label="등록 종류"><button type="button" disabled={busy} aria-pressed={kind === "lost"} onClick={() => setKind("lost")} className={`h-11 rounded-[14px] text-sm font-bold ${kind === "lost" ? "bg-white text-[#3544aa] shadow-sm" : "text-muted-foreground"}`}>잃어버렸어요</button><button type="button" disabled={busy} aria-pressed={kind === "found"} onClick={() => setKind("found")} className={`h-11 rounded-[14px] text-sm font-bold ${kind === "found" ? "bg-white text-[#3544aa] shadow-sm" : "text-muted-foreground"}`}>주인을 찾아요</button></div>}
       <form onSubmit={submit} className="space-y-4">
         <fieldset disabled={busy || photoBusy} className="space-y-4">
           <Field label="물건 이름 (필수)">
