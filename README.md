@@ -1,126 +1,129 @@
-# vinext-starter
+# 어디 있니?
 
-A clean full-stack starter running on [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and Drizzle support.
+> 우리 학교 분실물 찾기
 
-## Prerequisites
+《어디 있니?》는 학교 구성원이 한곳에서 분실 신고, 습득물 확인, 목격 단서
+공유와 보관 장소 확인을 할 수 있도록 만드는 반응형 웹앱입니다.
 
-- Node.js `>=22.13.0`
-- Portable: Windows, macOS, or Linux; no Bash required
-- Managed Linux: managed Linux runtime with Bash, `flock`, `curl`, `sha256sum`, and GNU `timeout`
-- Git is required only for publishing
+## 주요 사용자
 
-## Sites Lifecycle
+- 학생: 분실 신고, 습득물 등록, 찾기 단서 작성
+- 일반 교사: 습득물 인수, 보관 장소 입력, 반환 처리
+- 최종 관리자 교사: 게시물 관리와 교사 권한 관리
 
-The Sites initializer copies the shared starter and selects managed-linux only when `SITES_MANAGED_LINUX_CONTAINER=1`; otherwise it selects portable. It saves the selection only in ignored `.sites-runtime/execution-profile.json`. Both profiles copy/configure first, then use the plugin's separate `install-dependencies.mjs` step to measure installation independently. Edit source under `app/` and follow the Sites skill for installation, preview, builds, and publishing.
+새 사용자는 학생 권한으로 시작합니다. 교사 권한과 관리자 권한은 화면에서
+임의로 바꿀 수 없으며 서버에서 검증하도록 설계합니다.
 
-Whenever reopening or moving a checkout, run `node <plugin-root>/scripts/configure-execution-profile.mjs` before project commands. Profile changes do not alter tracked source or require reinstalling otherwise-valid dependencies; restart an existing preview to use the new selection. Do not commit or upload `.sites-runtime/`.
+## 현재 구현 상태
 
-This starter does not use `wrangler.jsonc`.
+현재 화면에서 다음 기능을 확인할 수 있습니다.
 
-`install:ci` runs `npm ci` once against the shared lockfile, disables parent-workspace discovery, and includes required dev/optional dependencies despite production/omit settings. Sharp defaults to prebuilt binaries unless explicitly configured otherwise. Do not overlap installers.
+- 모바일·데스크톱 반응형 메인 화면
+- 물건 이름·분류·색상·장소 검색
+- 분실·습득 필터
+- 물건 상세 화면
+- 분실·습득 등록 화면
+- 앱 내부 알림 화면
+- Firebase Google 로그인 기반 코드
+- Firestore 물건 등록과 공개 목록 실시간 조회 기반
 
-- **Portable:** Preserve host HOME, npm cache, registry, proxy, temporary paths, retry/concurrency settings, and lifecycle-script policy. Use `--prefer-offline --no-audit --no-fund`.
-- **Managed Linux:** Use the existing project-local HOME/cache/tmp setup and Linux install lock, tarball preflight, and timeout. Restore the image-seeded npm cache only when its lockfile hash matches; retain network fallback. Builds keep their existing timeout. These helpers are not invoked by the portable profile.
+Firebase 프로젝트 `school-findit`에는 서울 리전 Firestore 데이터베이스가
+생성되어 있으며 삭제 보호가 적용되어 있습니다. 학교 도메인 또는 허용 계정
+설정이 끝나기 전에는 보안 규칙이 데이터 접근을 차단합니다.
 
-`scripts/sites-env.mjs` preserves the caller's HOME, npm cache, proxy, XDG, and temporary-directory configuration while defaulting Wrangler and Miniflare state to the checkout. If npm reports an unwritable cache, select a writable path with `npm_config_cache` for that install. The `dev` and `start` scripts also keep Wrangler logs inside the checkout. Generated `.sites-runtime/` and `.wrangler/` directories are disposable and ignored by Git.
+아직 실제 운영 기능으로 연결되지 않은 항목도 있습니다.
 
-On portable, `npm run dev` uses `vinext dev` with HMR, starting at port 5173. Vinext records the running server in ignored `.vinext/` state, rejects an ordinary duplicate launch, and recovers stale state after a stopped process; exactly simultaneous starts can race. Pass `--port <port>` or `--hostname <host>` after `npm run dev --` when needed; keep portable previews on loopback.
+- 사진 업로드와 개인정보 가림 확인
+- 찾기 단서 작성·수정·삭제
+- 교사 인증코드와 역할 변경
+- 교사의 습득물 인수·반환 처리
+- 실제 알림 생성과 읽음 처리
+- 관리자 화면과 신고·숨김·삭제 기록
 
-On managed Linux, use `sites-preview start` only for requested browser QA. The project's dev script runs Vite and accepts the supervisor's `--host 0.0.0.0 --port 4173 --strictPort` arguments. The internal browser uses `http://terminal.local:4173/`; it is not a user-facing URL. The supervisor owns the preview lifecycle. The ignored local profile survives the supervisor's cleared process environment.
+따라서 현재 상태를 완성된 학교 운영 버전으로 배포하지 않습니다.
 
-The portable profile simulates ChatGPT sign-in only for loopback development requests. Visit `/signin-with-chatgpt?return_to=/` to sign in as `local_seedy` (`seedy@sites.test`, display name `Seedy`) and `/signout-with-chatgpt?return_to=/` to sign out. The development cookie preserves that identity across server restarts. Mock auth is disabled in the managed-linux profile and is not included in production builds; hosted authentication remains dispatch-owned.
+## 사용 기술
 
-The Worker uses `vinext/server/fetch-handler`, including Vinext's config-aware image handling. After building, `npm start` runs that Worker locally through Wrangler on `127.0.0.1`, sharing `.wrangler/state` with dev preview and local D1 migrations; it does not deploy the site or simulate sign-in. Use the URL printed by the server. Pass `npm start -- --port <port>` to select a different built-preview port.
+- Next.js / Vinext
+- React, TypeScript
+- Tailwind CSS
+- Shadcn 계열 UI 컴포넌트
+- Firebase Authentication
+- Cloud Firestore
+- Firebase Storage 예정
+- pnpm
 
-Local previews use Miniflare's placeholder `Request.cf` metadata without a network lookup. Set `CLOUDFLARE_CF_FETCH_ENABLED=true` to opt into fetching preview metadata; this setting does not change hosted request metadata.
+## 로컬 실행
 
-Local tool usage metrics are disabled by default. Set `WRANGLER_SEND_METRICS=true` to opt in.
+필요 환경:
 
-## Included Shape
+- Node.js 22.13 이상
+- pnpm 11.25
 
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `@cloudflare/workers-types` provides Worker types; `cloudflare-env.d.ts` declares optional `DB`/`BUCKET` bindings—update these declarations if binding names change
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+의존성을 설치하고 개발 서버를 실행합니다.
 
-## Workspace Auth Headers
-
-Signed-in visitors receive both `oai-authenticated-user-id` and `oai-authenticated-user-email`. Private Sites require every visitor to sign in; public Sites may also have anonymous visitors, for whom neither header is present.
-
-The user ID is stable for the same user on the same Site and different across Sites. Use it as the durable user key; use email and name for display or contact purposes.
-
-SIWC-authenticated workspace sites may also receive `oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty `name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by `oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const userId = requestHeaders.get("oai-authenticated-user-id");
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+corepack pnpm install
+corepack pnpm dev
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+기본 개발 주소는 `http://localhost:5173`입니다.
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs optional or required ChatGPT sign-in:
+## Firebase 설정
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use the returned `userId` as the stable user key for user-owned records; do not use email as a durable identifier.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send anonymous visitors through Sign in with ChatGPT.
-- In a Server Component, start sign-in with `<a href={chatGPTSignInPath(returnTo)} target="_top">`. The auth helper module is server-only; do not import it into a Client Component.
-- Do not use `fetch`, XHR, a client-side router, or a framework link that can prefetch the sign-in route. SIWC must start as a top-level navigation.
-- Never request the AuthAPI authorization endpoint directly. The dispatch-owned `/signin-with-chatgpt` route must start the SIWC flow.
-- Use `chatGPTSignOutPath(returnTo)` for browser sign-out links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because they depend on per-request identity headers.
+1. `.env.example`을 복사해 `.env.local`을 만듭니다.
+2. Firebase 콘솔의 웹 앱 설정값을 입력합니다.
+3. 임시 허용 계정 또는 학교 Google Workspace 도메인을 설정합니다.
+4. Authentication에서 Google 로그인 제공자를 활성화합니다.
+5. Firestore 및 Storage 보안 규칙을 배포합니다.
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the OAuth cookies, and identity header injection. Do not implement app routes for those reserved paths. Routes that do not import and call the helper remain anonymous-compatible.
+필요한 환경변수:
 
-SIWC establishes identity only; it does not prove workspace membership. Use the Sites hosting platform's access policy controls for workspace-wide restrictions, or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Local D1 migrations
-
-For a D1-backed local preview, generate SQL with `npm run db:generate`. Build once through the Sites skill's build entrypoint (or `npm run build` for standalone use) to generate `dist/server/wrangler.json`, rebuilding if bindings change. From the project root, apply each pending migration in order:
-
-```sh
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_example.sql
+```dotenv
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+NEXT_PUBLIC_FIREBASE_APP_ID=
+NEXT_PUBLIC_SCHOOL_EMAIL_DOMAIN=
 ```
 
-Replace the filename with the pending migration and `DB` with your D1 binding name if different. Use `.wrangler/state`, not `.wrangler/state/v3`; Wrangler adds the versioned directories. Do not replay migrations already applied locally. This updates only the preview database; publishing applies production migrations separately.
+Firebase 웹 앱 설정값은 클라이언트 식별 정보입니다. 서비스 계정 비공개 키,
+Google 계정 비밀번호와 교사 인증코드는 저장소에 올리지 않습니다.
+`.env.local`은 Git에서 제외됩니다.
 
-## Diagnostic Commands
+Firestore 규칙과 인덱스를 배포하려면 다음 명령을 사용합니다.
 
-- `npm run install:ci`: perform the one locked dependency install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build the deployable Sites artifact
-- `npm run start`: preview the built Worker locally with D1/R2 support
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+```bash
+corepack pnpm firebase deploy --only firestore:rules,firestore:indexes
+```
 
-When using the Sites plugin, follow its skill instructions for installation, builds, and publishing. These npm commands remain available for standalone use.
+사진 저장은 Firebase Storage를 사용합니다. 신규 프로젝트에서 Storage를
+사용하려면 Blaze 요금제와 결제 계정 연결이 필요할 수 있으므로 실제 운영 전
+예산 알림과 사용량을 설정해야 합니다.
 
-The portable build runs Vinext directly without a host `timeout` command. The managed-linux build uses `scripts/build-verified.sh` and its existing `SITES_BUILD_TIMEOUT` setting.
+## 검사 명령
 
-## Learn More
+변경 후 아래 검사를 실행합니다.
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+```bash
+corepack pnpm lint
+corepack pnpm exec tsc --noEmit
+corepack pnpm build
+```
+
+## 개인정보와 보안 원칙
+
+- 학교에서 허용한 Google 계정만 접근할 수 있어야 합니다.
+- 작성자의 실명과 이메일을 다른 학생에게 공개하지 않습니다.
+- 얼굴, 이름표, 학생증 정보와 전화번호가 보이는 사진은 올리지 않습니다.
+- 학생이 등록한 습득물은 교사가 실제로 인수하기 전까지 공개하지 않습니다.
+- 권한 변경, 숨김과 삭제 같은 관리 작업은 서버에서도 검증하고 기록합니다.
+- 인증정보와 비공개 키는 소스나 Git 커밋에 포함하지 않습니다.
+
+## 저장소
+
+GitHub: https://github.com/apodeix/school-findit
+
+자세한 기능 범위와 개발 원칙은 `AGENTS.md`에서 확인할 수 있습니다.
