@@ -111,7 +111,7 @@ type Management = {
 export default function FinditApp() {
   const [mode, setMode] = useState<Role | "live" | null>(null);
   useEffect(() => {
-    const initial = new URLSearchParams(window.location.search).get("demo") === "1" ? "student" : "live";
+    const initial = WORKSHOP_GUEST_ACCESS && new URLSearchParams(window.location.search).get("mode") !== "live" ? "student" : "live";
     setDemoRole(initial === "live" ? null : initial);
     // URL is available only after hydration; do not mount a live workspace first.
     // eslint-disable-next-line react-hooks/set-state-in-effect
