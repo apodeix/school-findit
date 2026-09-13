@@ -1,0 +1,56 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function securitySettingsExist() {
+      return exists(/databases/$(database)/documents/app_settings/security);
+    }
+
+    function isSchoolUser() {
+      return signedIn()
+        && request.auth.token.email is string
+        && securitySettingsExist()
+        && request.auth.token.email.matches(
+          get(/databases/$(database)/documents/app_settings/security).data.allowedEmailPattern
+        );
+    }
+
+    match /app_settings/{document} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId} {
+      allow read: if isSchoolUser() && request.auth.uid == userId;
+      allow create: if isSchoolUser()
+        && request.auth.uid == userId
+        && request.resource.data.role == "student"
+        && request.resource.data.active == true
+        && request.resource.data.email == request.auth.token.email;
+      allow update, delete: if false;
+    }
+
+    match /items/{itemId} {
+      allow read: if isSchoolUser() && resource.data.isPublished == true;
+      allow create: if isSchoolUser()
+        && request.resource.data.authorId == request.auth.uid
+        && (
+          (request.resource.data.kind == "lost"
+            && request.resource.data.status == "seeking"
+            && request.resource.data.isPublished == true)
+          ||
+          (request.resource.data.kind == "found"
+            && request.resource.data.status == "pending_handoff"
+            && request.resource.data.isPublished == false)
+        );
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
