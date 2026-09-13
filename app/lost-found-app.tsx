@@ -7,7 +7,7 @@ import {
   Award, Bell, Camera, Check, ChevronRight, CircleUserRound, Clock3, Gift, Home,
   ImagePlus, KeyRound, Lightbulb, MapPin, Megaphone, PackageCheck, PackageOpen,
   LoaderCircle, LogIn, LogOut, PenLine, Plus, RotateCcw, Search, ShieldCheck, Sparkles,
-  Tag, Trophy, X,
+  Tag, Trash2, Trophy, X,
 } from "lucide-react";
 import {
   GoogleAuthProvider,
@@ -30,7 +30,9 @@ import {
 import {
   confirmItemHandoff,
   createItem,
+  softDeleteItem,
   subscribeToPublishedItems,
+  updateItem,
   type ItemKind,
   type StoredItem,
 } from "@/lib/firebase/items";
@@ -126,6 +128,10 @@ export default function LostFoundApp() {
   const [notifications,setNotifications] = useState<AppNotification[]>([]);
   const [adminNotifications,setAdminNotifications] = useState<AppNotification[]>([]);
   const [notificationAdminOpen,setNotificationAdminOpen] = useState(false);
+  const [editingItem,setEditingItem] = useState<Item|null>(null);
+  const [deletingItem,setDeletingItem] = useState<Item|null>(null);
+  const [itemMutationBusy,setItemMutationBusy] = useState(false);
+  const [editError,setEditError] = useState("");
 
   const demoUserId = "demo-current-user";
   const rewardSummary = useMemo(
@@ -315,6 +321,41 @@ export default function LostFoundApp() {
     }
   }
 
+  async function saveItemEdits(formData: FormData) {
+    if (!editingItem || !authUser) return;
+    const title=String(formData.get("title")??"").trim();
+    const location=String(formData.get("location")??"").trim();
+    const dateText=String(formData.get("date")??"").trim();
+    const description=String(formData.get("description")??"").trim();
+    if(title.length<2||location.length<2||!dateText){setEditError("물건 이름, 장소와 날짜를 확인해 주세요.");return;}
+    setItemMutationBusy(true);
+    setEditError("");
+    try {
+      await updateItem(getFirebaseServices().db, editingItem.id, {title,location,dateText,description});
+      setEditingItem(null);
+      flash("글을 수정했습니다.");
+    } catch {
+      setEditError("수정하지 못했습니다. 본인 글인지와 현재 상태를 확인해 주세요.");
+    } finally {
+      setItemMutationBusy(false);
+    }
+  }
+
+  async function confirmDeleteItem() {
+    if (!deletingItem || !authUser) return;
+    setItemMutationBusy(true);
+    try {
+      await softDeleteItem(getFirebaseServices().db, deletingItem.id, authUser.uid);
+      setDeletingItem(null);
+      setSelected(null);
+      flash("글을 삭제하고 처리 기록을 남겼습니다.");
+    } catch {
+      flash("글을 삭제하지 못했습니다. 권한을 확인해 주세요.");
+    } finally {
+      setItemMutationBusy(false);
+    }
+  }
+
   function markHelpful(clue: DemoClue) {
     if (!selected) return;
     const result = grantDemoReward(rewards, {
@@ -467,7 +508,7 @@ export default function LostFoundApp() {
         <div className="search-shell"><Search className="size-5 shrink-0 text-[#4b5599]"/><Input value={query} onChange={e=>setQuery(e.target.value)} className="h-auto border-0 bg-transparent p-0 text-base shadow-none focus-visible:ring-0" placeholder="물건 이름, 색상, 잃어버린 장소로 검색" aria-label="분실물 검색"/>{query&&<Button variant="ghost" size="icon-sm" className="rounded-full" onClick={()=>setQuery("")} aria-label="검색어 지우기"><X/></Button>}</div>
         <div className="scrollbar-none -mx-4 mt-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0" aria-label="물건 종류 필터"><FilterChip active={kind==="all"} onClick={()=>setKind("all")}>전체 {items.length}</FilterChip><FilterChip active={kind==="lost"} onClick={()=>setKind("lost")}>잃어버렸어요</FilterChip><FilterChip active={kind==="found"} onClick={()=>setKind("found")}>주인을 찾아요</FilterChip><FilterChip>최근 7일</FilterChip><FilterChip>장소</FilterChip></div>
         <div className="mt-7 flex items-center justify-between"><p className="text-sm font-bold">{section==="clues"?"내 단서":`${filtered.length}개의 물건`}</p>{section!=="clues"&&<span className="text-sm font-medium text-muted-foreground">최신순</span>}</div>
-        {filtered.length>0?<div className="mt-3 grid gap-4 sm:grid-cols-2">{filtered.map(item=><ItemCard key={item.id} item={item} onClick={()=>setSelected(item)}/>)}</div>:<div className="mt-4 grid min-h-64 place-items-center rounded-[28px] border border-dashed border-[#cfd3e9] bg-white p-8 text-center"><div>{section==="clues"?<Lightbulb className="mx-auto mb-3 size-9 text-[#d28700]"/>:<Search className="mx-auto mb-3 size-9 text-[#7a82bd]"/>}<p className="font-bold">{section==="mine"?"아직 작성한 글이 없습니다":section==="clues"?"아직 저장된 내 단서가 없습니다":"검색 결과가 없습니다"}</p><p className="mt-1 text-sm text-muted-foreground">{section==="all"?"장소나 색상을 다른 말로 검색해 보세요.":section==="mine"?"분실 신고나 습득물을 등록하면 여기에 표시됩니다.":"실제 찾기 단서 저장 기능을 연결하면 이곳에서 확인할 수 있습니다."}</p></div></div>}
+        {filtered.length>0?<div className="mt-3 grid gap-4 sm:grid-cols-2">{filtered.map(item=><ItemCard key={item.id} item={item} canEdit={Boolean(authUser&&item.authorId===authUser.uid&&(item.status==="찾는 중"||item.status==="전달 대기"))} canDelete={Boolean(authUser&&(item.authorId===authUser.uid||userRole==="final_admin"))} onClick={()=>setSelected(item)} onEdit={()=>{setEditError("");setEditingItem(item)}} onDelete={()=>setDeletingItem(item)}/>)}</div>:<div className="mt-4 grid min-h-64 place-items-center rounded-[28px] border border-dashed border-[#cfd3e9] bg-white p-8 text-center"><div>{section==="clues"?<Lightbulb className="mx-auto mb-3 size-9 text-[#d28700]"/>:<Search className="mx-auto mb-3 size-9 text-[#7a82bd]"/>}<p className="font-bold">{section==="mine"?"아직 작성한 글이 없습니다":section==="clues"?"아직 저장된 내 단서가 없습니다":"검색 결과가 없습니다"}</p><p className="mt-1 text-sm text-muted-foreground">{section==="all"?"장소나 색상을 다른 말로 검색해 보세요.":section==="mine"?"분실 신고나 습득물을 등록하면 여기에 표시됩니다.":"실제 찾기 단서 저장 기능을 연결하면 이곳에서 확인할 수 있습니다."}</p></div></div>}
       </section></main>
 
       <aside className="sticky top-[72px] hidden h-[calc(100vh-72px)] border-l border-[#e0e2ef] px-6 py-8 xl:block"><div className="mb-6 flex items-center justify-between"><h2 className="font-extrabold tracking-[-0.03em]">최근 찾기 단서</h2><Lightbulb className="size-5 text-[#d28700]"/></div><div className="space-y-3"><ClueCard title="검정색 무선 이어폰" text="도서관 반납대 옆에서 비슷한 케이스를 봤어요." time="8분 전"/><ClueCard title="은색 보온 물병" text="급식실에서 후관 쪽으로 옮겨진 것 같아요." time="35분 전"/><ClueCard title="투명 학생증 케이스" text="운동장 방송실 앞 계단에서 봤습니다." time="어제"/></div><button className="mt-4 flex w-full items-center justify-center gap-1 rounded-full py-2 text-sm font-bold text-[#4a56ba] hover:bg-[#f0f1ff]">단서 모두 보기<ChevronRight className="size-4"/></button><div className="mt-8 rounded-[26px] bg-[#1f265e] p-5 text-white shadow-[0_16px_30px_rgba(31,38,94,.14)]"><div className="mb-3 grid size-10 place-items-center rounded-2xl bg-white/12"><Megaphone className="size-5"/></div><p className="font-bold">사진 등록 전 확인해요</p><p className="mt-1 text-xs leading-relaxed text-[#d8dcff]">얼굴, 이름표, 전화번호가 보이지 않도록 가린 뒤 올려주세요.</p></div></aside>
@@ -482,6 +523,17 @@ export default function LostFoundApp() {
     <Dialog open={handoffOpen} onOpenChange={setHandoffOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[30px] border-[#dfe2f1] sm:max-w-[620px]"><DialogHeader className="text-left"><DialogTitle className="flex items-center gap-2 text-2xl font-extrabold tracking-[-0.04em]"><PackageCheck className="size-6 text-[#4a56ba]"/>습득물 인수 대기</DialogTitle><DialogDescription>학생에게 실제 물건을 전달받은 뒤 보관 장소를 입력하고 인수해 주세요.</DialogDescription></DialogHeader><div className="space-y-3">{visiblePendingHandoffs.length>0?visiblePendingHandoffs.map(handoff=><HandoffCard key={handoff.id} handoff={handoff} onConfirm={confirmHandoff}/>):<div className="rounded-[22px] bg-[#f4f5fb] p-8 text-center text-sm text-muted-foreground">현재 인수를 기다리는 습득물이 없습니다.</div>}</div><div className="rounded-[18px] bg-[#fff7d6] px-4 py-3 text-xs leading-5 text-[#685524]">실제 등록 항목은 인수 후 공개 목록으로 이동합니다. 도움 포인트 영구 지급은 서버 검증 기능 연결 후 적용됩니다.</div></DialogContent></Dialog>
 
     <Dialog open={adminOpen} onOpenChange={setAdminOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[30px] border-[#dfe2f1] sm:max-w-[700px]"><DialogHeader className="text-left"><DialogTitle className="flex items-center gap-2 text-2xl font-extrabold tracking-[-0.04em]"><ShieldCheck className="size-6 text-[#4a56ba]"/>도움 포인트 관리</DialogTitle><DialogDescription>지급 사유와 연결 항목을 확인하고 잘못된 지급을 취소합니다. 현재는 시연 데이터입니다.</DialogDescription></DialogHeader><div className="space-y-3">{rewards.map(transaction=><div key={transaction.id} className={`rounded-[20px] border p-4 ${transaction.status==="cancelled"?"border-[#dedfe6] bg-[#f5f5f7]":"border-[#ead89b] bg-[#fffdf5]"}`}><div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-extrabold">{rewardReasonLabel(transaction.reason)} · +{transaction.points}점</p><Badge className={transaction.status==="active"?"border-0 bg-[#fff0ad] text-[#755400]":"border-0 bg-[#e2e2e7] text-[#666873]"}>{transaction.status==="active"?"지급됨":"취소됨"}</Badge></div><p className="mt-1 break-all text-xs text-muted-foreground">사용자 {transaction.userId} · 항목 {transaction.relatedItemId}{transaction.relatedClueId?` · 단서 ${transaction.relatedClueId}`:""}</p><p className="mt-1 text-xs text-muted-foreground">{transaction.grantedAt} · 처리: {transaction.grantedBy}{transaction.cancelledBy?` · 취소: ${transaction.cancelledBy}`:""}</p></div>{transaction.status==="active"&&<Button variant="outline" className="rounded-full border-[#d7a9a9] text-[#9a3e3e] hover:bg-[#fff0f0]" onClick={()=>cancelReward(transaction.id)}><RotateCcw className="size-4"/>지급 취소</Button>}</div></div>)}</div></DialogContent></Dialog>
+
+    <Dialog open={Boolean(editingItem)} onOpenChange={open=>{if(!open&&!itemMutationBusy)setEditingItem(null)}}>
+      <DialogContent className="rounded-[30px] border-[#dfe2f1] sm:max-w-[520px]">
+        <DialogHeader className="text-left"><DialogTitle className="text-2xl font-extrabold tracking-[-0.04em]">글 수정</DialogTitle><DialogDescription>본인이 작성한 진행 중 글만 수정할 수 있습니다.</DialogDescription></DialogHeader>
+        {editingItem&&<form action={saveItemEdits} className="space-y-4"><label className="block text-sm font-bold">물건 이름<Input required minLength={2} name="title" defaultValue={editingItem.title} className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/></label><label className="block text-sm font-bold">장소<Input required minLength={2} name="location" defaultValue={editingItem.location} className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/></label><label className="block text-sm font-bold">날짜<Input required type="date" name="date" defaultValue={editingItem.date} className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/></label><label className="block text-sm font-bold">특징 <span className="font-medium text-muted-foreground">(선택)</span><Textarea name="description" defaultValue={editingItem.description==="상세 설명이 없습니다."?"":editingItem.description} className="mt-2 min-h-24 rounded-[16px] bg-[#f8f8fd]"/></label>{editError&&<p role="alert" className="rounded-[16px] bg-[#fff0f0] px-4 py-3 text-sm font-bold text-[#9a3e3e]">{editError}</p>}<DialogFooter><Button type="button" variant="outline" disabled={itemMutationBusy} className="h-12 rounded-full" onClick={()=>setEditingItem(null)}>취소</Button><Button type="submit" disabled={itemMutationBusy} className="h-12 rounded-full bg-[#4958c7] px-6 hover:bg-[#3847b5]">{itemMutationBusy?<><LoaderCircle className="size-4 animate-spin"/>저장 중</>:"수정 저장"}</Button></DialogFooter></form>}
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={Boolean(deletingItem)} onOpenChange={open=>{if(!open&&!itemMutationBusy)setDeletingItem(null)}}>
+      <DialogContent className="rounded-[30px] border-[#ead4d4] sm:max-w-[440px]"><DialogHeader className="text-left"><DialogTitle className="flex items-center gap-2 text-2xl font-extrabold"><Trash2 className="size-6 text-[#a33e3e]"/>글을 삭제할까요?</DialogTitle><DialogDescription>목록에서는 즉시 사라지지만, 안전을 위해 삭제한 계정과 시간 기록은 남습니다.</DialogDescription></DialogHeader><div className="rounded-[18px] bg-[#f7f7fb] p-4 text-sm font-bold">{deletingItem?.title}</div><DialogFooter><Button variant="outline" disabled={itemMutationBusy} className="h-12 rounded-full" onClick={()=>setDeletingItem(null)}>취소</Button><Button disabled={itemMutationBusy} className="h-12 rounded-full bg-[#a33e3e] px-6 hover:bg-[#873232]" onClick={confirmDeleteItem}>{itemMutationBusy?<><LoaderCircle className="size-4 animate-spin"/>삭제 중</>:"삭제하기"}</Button></DialogFooter></DialogContent>
+    </Dialog>
 
     <Dialog open={registerOpen} onOpenChange={changeRegisterOpen}>
       <DialogContent className="max-h-[90vh] overflow-y-auto rounded-[30px] border-[#dfe2f1] sm:max-w-[560px]">
@@ -534,7 +586,9 @@ export default function LostFoundApp() {
 function SideLink({icon,label,active,count,onClick}:{icon:React.ReactNode;label:string;active?:boolean;count?:string;onClick?:()=>void}){return <button onClick={onClick} className={`flex h-12 w-full items-center gap-3 rounded-[16px] px-3 text-sm font-bold transition ${active?"bg-[#e0e3ff] text-[#3544aa]":"text-[#55586b] hover:bg-[#f0f1f8]"}`}><span className="[&>svg]:size-[19px]">{icon}</span><span>{label}</span>{count&&<span className={`ml-auto grid min-w-5 place-items-center rounded-full px-1.5 py-0.5 text-[10px] ${label.includes("포인트")?"bg-[#ffe17c] text-[#634900]":"bg-[#e33f65] text-white"}`}>{count}</span>}</button>}
 function MobileLink({icon,label,active,onClick}:{icon:React.ReactNode;label:string;active?:boolean;onClick?:()=>void}){return <button onClick={onClick} className={`flex flex-col items-center justify-center gap-1 text-[11px] font-bold ${active?"text-[#4251b8]":"text-[#73768a]"}`}><span className={`grid h-8 w-14 place-items-center rounded-full [&>svg]:size-5 ${active?"bg-[#e0e3ff]":""}`}>{icon}</span>{label}</button>}
 function FilterChip({active,onClick,children}:{active?:boolean;onClick?:()=>void;children:React.ReactNode}){return <button onClick={onClick} className={`h-10 shrink-0 rounded-full border px-4 text-sm font-bold transition ${active?"border-[#4958c7] bg-[#4958c7] text-white shadow-[0_5px_13px_rgba(73,88,199,.18)]":"border-[#d5d8e8] bg-white text-[#55586c] hover:border-[#929ad1] hover:bg-[#f6f6ff]"}`}>{children}</button>}
-function ItemCard({item,onClick}:{item:Item;onClick:()=>void}){return <button onClick={onClick} className="item-card group text-left"><div className={`item-visual bg-gradient-to-br ${tones[item.tone]}`}>{item.imageUrl?<img src={item.imageUrl} alt="" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"/>:<PackageOpen className="size-14 stroke-[1.25] opacity-75 transition-transform duration-300 group-hover:-rotate-3 group-hover:scale-105"/>}<span className="absolute left-3 top-3 z-10 rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-extrabold backdrop-blur-sm">{item.kind==="lost"?"분실":"습득"}</span></div><div className="min-w-0 flex-1 py-0.5"><div className="flex items-start justify-between gap-2"><h3 className="line-clamp-1 text-[16px] font-extrabold tracking-[-0.025em]">{item.title}</h3><ChevronRight className="mt-0.5 size-4 shrink-0 text-[#9b9fb3] transition-transform group-hover:translate-x-0.5"/></div><p className="mt-2 flex items-center gap-1.5 text-[13px] text-[#666a7c]"><MapPin className="size-3.5 shrink-0"/><span className="line-clamp-1">{item.location}</span></p><p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-[#666a7c]"><Clock3 className="size-3.5 shrink-0"/>{item.date}</p><div className="mt-3 flex items-center justify-between gap-2"><StatusBadge item={item}/>{item.clueCount>0&&<span className="flex items-center gap-1 text-xs font-bold text-[#a66b00]"><Lightbulb className="size-3.5"/>단서 {item.clueCount}</span>}</div></div></button>}
+function ItemCard({item,canEdit,canDelete,onClick,onEdit,onDelete}:{item:Item;canEdit:boolean;canDelete:boolean;onClick:()=>void;onEdit:()=>void;onDelete:()=>void}){
+  return <div className="item-card group relative text-left"><button onClick={onClick} className="contents"><div className={`item-visual bg-gradient-to-br ${tones[item.tone]}`}>{item.imageUrl?<img src={item.imageUrl} alt="" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"/>:<PackageOpen className="size-14 stroke-[1.25] opacity-75 transition-transform duration-300 group-hover:-rotate-3 group-hover:scale-105"/>}<span className="absolute left-3 top-3 z-10 rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-extrabold backdrop-blur-sm">{item.kind==="lost"?"분실":"습득"}</span></div><div className="min-w-0 flex-1 py-0.5"><div className="flex items-start justify-between gap-2"><h3 className="line-clamp-1 pr-14 text-[16px] font-extrabold tracking-[-0.025em]">{item.title}</h3><ChevronRight className="mt-0.5 size-4 shrink-0 text-[#9b9fb3] transition-transform group-hover:translate-x-0.5"/></div><p className="mt-2 flex items-center gap-1.5 text-[13px] text-[#666a7c]"><MapPin className="size-3.5 shrink-0"/><span className="line-clamp-1">{item.location}</span></p><p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-[#666a7c]"><Clock3 className="size-3.5 shrink-0"/>{item.date}</p><div className="mt-3 flex items-center justify-between gap-2"><StatusBadge item={item}/>{item.clueCount>0&&<span className="flex items-center gap-1 text-xs font-bold text-[#a66b00]"><Lightbulb className="size-3.5"/>단서 {item.clueCount}</span>}</div></div></button>{(canEdit||canDelete)&&<div className="absolute right-12 top-3 z-20 flex gap-1">{canEdit&&<button onClick={onEdit} className="grid size-9 place-items-center rounded-full bg-white text-[#4652ad] shadow-sm" aria-label={`${item.title} 수정`}><PenLine className="size-4"/></button>}{canDelete&&<button onClick={onDelete} className="grid size-9 place-items-center rounded-full bg-white text-[#a33e3e] shadow-sm" aria-label={`${item.title} 삭제`}><Trash2 className="size-4"/></button>}</div>}</div>
+}
 function StatusBadge({item}:{item:Item}){return <Badge className={`border-0 px-2.5 py-1 ${item.kind==="lost"?"bg-[#eeeaff] text-[#5146a8]":"bg-[#daf4eb] text-[#17624c]"}`}>{item.status}</Badge>}
 function ClueCard({title,text,time}:{title:string;text:string;time:string}){return <button className="w-full rounded-[20px] border border-[#e1e3f0] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#bec3e5] hover:shadow-[0_8px_20px_rgba(40,45,90,.07)]"><div className="mb-2 flex items-center justify-between gap-2"><p className="line-clamp-1 text-sm font-extrabold">{title}</p><span className="shrink-0 text-[11px] text-muted-foreground">{time}</span></div><p className="line-clamp-2 text-xs leading-relaxed text-[#6d7083]">{text}</p></button>}
 function InfoRow({icon,label,value}:{icon:React.ReactNode;label:string;value:string}){return <div className="grid grid-cols-[20px_44px_1fr] items-start gap-2"><span className="pt-0.5 text-[#5963af] [&>svg]:size-4">{icon}</span><span className="font-bold text-[#696c7e]">{label}</span><span className="font-medium text-[#303344]">{value}</span></div>}

@@ -119,18 +119,42 @@ service cloud.firestore {
             && request.resource.data.status == "pending_handoff"
             && request.resource.data.isPublished == false)
         );
-      allow update: if isTeacher()
-        && resource.data.kind == 'found'
-        && resource.data.status == 'pending_handoff'
-        && request.resource.data.status == 'teacher_received'
-        && request.resource.data.isPublished == true
-        && request.resource.data.storageLocation is string
-        && request.resource.data.storageLocation.size() >= 2
-        && request.resource.data.receivedById == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'isPublished', 'storageLocation', 'receivedById',
-          'receivedAt', 'updatedAt'
-        ]);
+      allow update: if (
+          isSchoolUser()
+          && resource.data.authorId == request.auth.uid
+          && resource.data.status in ['seeking', 'pending_handoff']
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 2
+          && request.resource.data.location is string
+          && request.resource.data.location.size() >= 2
+          && request.resource.data.dateText is string
+          && request.resource.data.dateText.size() > 0
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'title', 'location', 'dateText', 'description', 'updatedAt'
+          ])
+        ) || (
+          isTeacher()
+          && resource.data.kind == 'found'
+          && resource.data.status == 'pending_handoff'
+          && request.resource.data.status == 'teacher_received'
+          && request.resource.data.isPublished == true
+          && request.resource.data.storageLocation is string
+          && request.resource.data.storageLocation.size() >= 2
+          && request.resource.data.receivedById == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'isPublished', 'storageLocation', 'receivedById',
+            'receivedAt', 'updatedAt'
+          ])
+        ) || (
+          isSchoolUser()
+          && (resource.data.authorId == request.auth.uid || isFinalAdmin())
+          && request.resource.data.deleted == true
+          && request.resource.data.isPublished == false
+          && request.resource.data.deletedBy == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'deleted', 'isPublished', 'deletedBy', 'deletedAt', 'updatedAt'
+          ])
+        );
       allow delete: if false;
     }
 

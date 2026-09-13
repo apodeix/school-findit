@@ -5,6 +5,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   writeBatch,
   where,
   type DocumentData,
@@ -52,6 +53,13 @@ type CreateItemInput = {
   dateText: string;
 };
 
+export type UpdateItemInput = {
+  title: string;
+  location: string;
+  dateText: string;
+  description: string;
+};
+
 function toStoredItem(snapshot: QueryDocumentSnapshot<DocumentData>): StoredItem {
   const data = snapshot.data();
   return {
@@ -92,7 +100,7 @@ export function subscribeToPublishedItems(
   if (canReviewPending) {
     return onSnapshot(
       query(collection(db, "items")),
-      snapshot => publish([snapshot.docs.map(toStoredItem)]),
+      snapshot => publish([snapshot.docs.filter(item => item.data().deleted !== true).map(toStoredItem)]),
       onError,
     );
   }
@@ -102,7 +110,7 @@ export function subscribeToPublishedItems(
   const unsubscribePublished = onSnapshot(
     query(collection(db, "items"), where("isPublished", "==", true)),
     snapshot => {
-      publishedItems = snapshot.docs.map(toStoredItem);
+      publishedItems = snapshot.docs.filter(item => item.data().deleted !== true).map(toStoredItem);
       publish([publishedItems, ownItems]);
     },
     onError,
@@ -110,7 +118,7 @@ export function subscribeToPublishedItems(
   const unsubscribeOwn = onSnapshot(
     query(collection(db, "items"), where("authorId", "==", userId)),
     snapshot => {
-      ownItems = snapshot.docs.map(toStoredItem);
+      ownItems = snapshot.docs.filter(item => item.data().deleted !== true).map(toStoredItem);
       publish([publishedItems, ownItems]);
     },
     onError,
@@ -151,6 +159,26 @@ export async function confirmItemHandoff(
     updatedAt: serverTimestamp(),
   });
   await batch.commit();
+}
+
+export async function updateItem(db: Firestore, itemId: string, input: UpdateItemInput) {
+  await updateDoc(doc(db, "items", itemId), {
+    title: input.title.trim(),
+    location: input.location.trim(),
+    dateText: input.dateText,
+    description: input.description.trim() || "상세 설명이 없습니다.",
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function softDeleteItem(db: Firestore, itemId: string, actorId: string) {
+  await updateDoc(doc(db, "items", itemId), {
+    deleted: true,
+    isPublished: false,
+    deletedBy: actorId,
+    deletedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function createItem(
