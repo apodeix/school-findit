@@ -5,7 +5,9 @@ const source = readFileSync(new URL("../app/findit-app.tsx", import.meta.url), "
 test("원래 모바일 홈·찾기·등록·내 정보 메뉴를 유지한다", () => {
   const start = source.indexOf('aria-label="모바일 메뉴"');
   const menu = source.slice(start, source.indexOf("</nav>", start));
-  for (const label of ['label="홈"', 'label="찾기"', 'aria-label="물건 등록"', 'label="내 정보"']) assert.ok(menu.includes(label));
+  for (const label of ['label="홈"', 'label="찾기"', 'label="등록"', 'label="내 정보"']) assert.ok(menu.includes(label));
+  assert.equal((menu.match(/<MobileTab/g) || []).length, 4);
+  assert.equal(menu.includes("-top-5"), false);
   assert.equal(menu.includes("인수 대기"), false);
   assert.ok(menu.includes("setSearchFocus"));
   assert.ok(menu.includes("requestRegistration"));

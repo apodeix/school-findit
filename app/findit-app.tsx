@@ -1098,16 +1098,12 @@ export default function FinditApp() {
             setSearchFocus((value) => value + 1);
           }}
         />
-        <button
-          className="relative flex flex-col items-center justify-center gap-1 text-sm font-bold text-[#4a56ba]"
+        <MobileTab
+          icon={<Plus />}
+          label="등록"
+          active={Boolean(editor)}
           onClick={requestRegistration}
-          aria-label="물건 등록"
-        >
-          <span className="absolute -top-5 grid size-14 place-items-center rounded-[20px] bg-[#4958c7] text-white shadow-[0_9px_20px_rgba(73,88,199,.32)]">
-            <Plus className="size-7" />
-          </span>
-          <span className="mt-9">등록</span>
-        </button>
+        />
         <MobileTab
           icon={<CircleUserRound />}
           label="내 정보"
