@@ -2,7 +2,7 @@
 
 우리 학교 분실물 찾기 — 중학교 구성원을 위한 반응형 웹앱입니다.
 
-운영 주소: https://school-findit.vercel.app
+웹앱 바로 열기: [어디 있니? — 우리 학교 분실물 찾기](https://school-findit.vercel.app)
 
 역할 시연 주소: https://school-findit.vercel.app/?demo=1
 
