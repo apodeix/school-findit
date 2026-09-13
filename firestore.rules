@@ -13,9 +13,14 @@ service cloud.firestore {
     function isSchoolUser() {
       return signedIn()
         && request.auth.token.email is string
+        && request.auth.token.email_verified == true
         && securitySettingsExist()
-        && request.auth.token.email.matches(
-          get(/databases/$(database)/documents/app_settings/security).data.allowedEmailPattern
+        && (
+          request.auth.token.email.matches(
+            get(/databases/$(database)/documents/app_settings/security).data.allowedEmailPattern
+          )
+          // 학교 도메인을 확정하기 전 여러 역할을 시험하기 위한 임시 허용이다.
+          || request.auth.token.email.matches('.*@gmail[.]com')
         );
     }
 

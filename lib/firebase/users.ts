@@ -7,10 +7,16 @@ import {
 } from "firebase/firestore";
 import type { User } from "firebase/auth";
 
-export async function ensureUserProfile(db: Firestore, user: User) {
+export type UserRole = "student" | "teacher" | "final_admin";
+
+function readRole(value: unknown): UserRole {
+  return value === "teacher" || value === "final_admin" ? value : "student";
+}
+
+export async function ensureUserProfile(db: Firestore, user: User): Promise<UserRole> {
   const userReference = doc(db, "users", user.uid);
   const current = await getDoc(userReference);
-  if (current.exists()) return;
+  if (current.exists()) return readRole(current.data().role);
 
   const profile = {
     email: user.email,
@@ -23,7 +29,9 @@ export async function ensureUserProfile(db: Firestore, user: User) {
   // final_admin을 요청해도 규칙에서 거부되며 학생 프로필로 다시 시도한다.
   try {
     await setDoc(userReference, { ...profile, role: "final_admin" });
+    return "final_admin";
   } catch {
     await setDoc(userReference, { ...profile, role: "student" });
+    return "student";
   }
 }

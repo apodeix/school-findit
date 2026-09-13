@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import Image from "next/image";
 import {
-  Award, Bell, Check, ChevronRight, CircleUserRound, Clock3, Eye, Gift, Home,
+  Award, Bell, Camera, Check, ChevronRight, CircleUserRound, Clock3, Eye, Gift, Home,
   ImagePlus, Lightbulb, MapPin, Megaphone, PackageCheck, PackageOpen,
-  LogIn, LogOut, PenLine, Plus, RotateCcw, Search, ShieldCheck, Sparkles,
+  LoaderCircle, LogIn, LogOut, PenLine, Plus, RotateCcw, Search, ShieldCheck, Sparkles,
   Tag, Trophy, X,
 } from "lucide-react";
 import {
@@ -31,7 +32,8 @@ import {
   type ItemKind,
   type StoredItem,
 } from "@/lib/firebase/items";
-import { ensureUserProfile } from "@/lib/firebase/users";
+import { ensureUserProfile, type UserRole } from "@/lib/firebase/users";
+import { prepareItemImage } from "@/lib/images";
 import {
   REWARD_POINTS,
   cancelDemoReward,
@@ -100,12 +102,17 @@ export default function LostFoundApp() {
   const [items,setItems] = useState(initialItems);
   const [toast,setToast] = useState("");
   const [authUser,setAuthUser] = useState<User|null>(null);
+  const [userRole,setUserRole] = useState<UserRole|null>(null);
   const [authBusy,setAuthBusy] = useState(false);
   const [rewards,setRewards] = useState<RewardTransaction[]>(initialDemoRewards);
   const [profileOpen,setProfileOpen] = useState(false);
   const [handoffOpen,setHandoffOpen] = useState(false);
   const [adminOpen,setAdminOpen] = useState(false);
   const [pendingHandoffs,setPendingHandoffs] = useState(initialPendingHandoffs);
+  const [photo,setPhoto] = useState<File|null>(null);
+  const [photoPreview,setPhotoPreview] = useState("");
+  const [photoBusy,setPhotoBusy] = useState(false);
+  const [registerBusy,setRegisterBusy] = useState(false);
 
   const demoUserId = "demo-current-user";
   const rewardSummary = useMemo(
@@ -124,6 +131,7 @@ export default function LostFoundApp() {
 
       if (!user) {
         setAuthUser(null);
+        setUserRole(null);
         setItems(initialItems);
         return;
       }
@@ -135,9 +143,11 @@ export default function LostFoundApp() {
       }
 
       try {
-        await ensureUserProfile(db, user);
+        const role = await ensureUserProfile(db, user);
+        setUserRole(role);
       } catch {
-        flash("학교 사용자 정보를 준비하지 못했습니다. Firebase 설정을 확인해 주세요.");
+        await signOut(auth);
+        flash("계정 등록에 실패해 로그아웃했습니다. 관리자에게 계정 허용 여부를 확인해 주세요.");
         return;
       }
 
@@ -154,6 +164,12 @@ export default function LostFoundApp() {
       unsubscribeAuth();
     };
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (photoPreview) URL.revokeObjectURL(photoPreview);
+    };
+  }, [photoPreview]);
 
   const filtered = useMemo(() => {
     const needle=query.trim().toLowerCase();
@@ -224,6 +240,34 @@ export default function LostFoundApp() {
     flash("포인트 지급을 취소하고 기록을 남겼습니다.");
   }
 
+  async function handlePhotoSelected(event: ChangeEvent<HTMLInputElement>) {
+    const selectedPhoto = event.target.files?.[0];
+    event.target.value = "";
+    if (!selectedPhoto) return;
+
+    setPhotoBusy(true);
+    try {
+      const preparedPhoto = await prepareItemImage(selectedPhoto);
+      setPhoto(preparedPhoto);
+      setPhotoPreview(URL.createObjectURL(preparedPhoto));
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "사진을 불러오지 못했습니다.");
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  function clearPhoto() {
+    setPhoto(null);
+    setPhotoPreview("");
+  }
+
+  function changeRegisterOpen(open: boolean) {
+    if (registerBusy) return;
+    setRegisterOpen(open);
+    if (!open) clearPhoto();
+  }
+
   async function addDemoItem(formData:FormData){
     const title=String(formData.get("title")||"새로 등록한 물건");
     const location=String(formData.get("location")||"장소 확인 중");
@@ -234,14 +278,22 @@ export default function LostFoundApp() {
         flash("학교 Google 계정으로 먼저 로그인해 주세요.");
         return;
       }
+      setRegisterBusy(true);
       try {
-        await createItem(getFirebaseServices().db, {
-          kind:newKind, title, location, description, authorId:authUser.uid,
+        const { db, storage } = getFirebaseServices();
+        await createItem(db, storage, {
+          kind:newKind, title, location, description, authorId:authUser.uid, image:photo,
         });
         setRegisterOpen(false);
+        clearPhoto();
         flash(newKind==="lost" ? "분실 신고가 저장되었습니다." : "습득물이 전달 대기로 저장되었습니다.");
-      } catch {
-        flash("Firebase에 저장하지 못했습니다. 설정과 보안 규칙을 확인해 주세요.");
+      } catch (error) {
+        const message = error instanceof Error && error.message.toLowerCase().includes("storage")
+          ? "사진을 업로드하지 못했습니다. Firebase Storage 설정을 확인해 주세요."
+          : "Firebase에 저장하지 못했습니다. 설정과 보안 규칙을 확인해 주세요.";
+        flash(message);
+      } finally {
+        setRegisterBusy(false);
       }
       return;
     }
@@ -257,7 +309,7 @@ export default function LostFoundApp() {
         <div className="min-w-0"><div className="flex items-baseline gap-2"><h1 className="text-[1.28rem] font-extrabold tracking-[-0.055em] sm:text-[1.45rem]">어디 있니?</h1><span className="hidden text-sm font-medium text-muted-foreground sm:inline">우리 학교 분실물 찾기</span></div></div>
         <div className="ml-auto flex items-center gap-2">
           <Button variant="ghost" size="icon-lg" className="relative rounded-full hover:bg-[#eeedff]" aria-label="알림 3개" onClick={()=>setNoticeOpen(true)}><Bell className="size-5"/><span className="absolute right-1 top-1 grid size-[18px] place-items-center rounded-full bg-[#e33f65] text-[10px] font-bold text-white">3</span></Button>
-          {isFirebaseConfigured ? authUser ? <button onClick={handleSignOut} className="hidden items-center gap-2 rounded-full border border-[#d9dcf0] bg-white px-3 py-2 text-sm font-bold shadow-[0_2px_8px_rgba(40,45,85,.05)] sm:flex"><span className="grid size-8 place-items-center rounded-full bg-[#e0e3ff] text-[#3e4daf]">{authUser.displayName?.slice(0,1)||"학"}</span><span>학교 계정</span><LogOut className="size-4"/></button> : <Button variant="outline" className="rounded-full" disabled={authBusy} onClick={handleSignIn}><LogIn className="size-4"/>{authBusy?"로그인 중":"학교 계정 로그인"}</Button> : <span className="hidden rounded-full bg-[#fff4cf] px-3 py-2 text-xs font-bold text-[#725700] sm:inline">시연 모드</span>}
+          {isFirebaseConfigured ? authUser ? <button onClick={handleSignOut} className="hidden items-center gap-2 rounded-full border border-[#d9dcf0] bg-white px-3 py-2 text-sm font-bold shadow-[0_2px_8px_rgba(40,45,85,.05)] sm:flex"><span className="grid size-8 place-items-center rounded-full bg-[#e0e3ff] text-[#3e4daf]">{authUser.displayName?.slice(0,1)||"학"}</span><span>{userRole==="final_admin"?"최종 관리자":userRole==="teacher"?"일반 교사":"학생"}</span><LogOut className="size-4"/></button> : <Button variant="outline" className="rounded-full" disabled={authBusy} onClick={handleSignIn}><LogIn className="size-4"/>{authBusy?"로그인 중":"학교 계정 로그인"}</Button> : <span className="hidden rounded-full bg-[#fff4cf] px-3 py-2 text-xs font-bold text-[#725700] sm:inline">시연 모드</span>}
         </div>
       </div>
     </header>
@@ -265,9 +317,8 @@ export default function LostFoundApp() {
     <div className="mx-auto grid max-w-[1440px] lg:grid-cols-[220px_minmax(0,1fr)_280px]">
       <aside className="sticky top-[72px] hidden h-[calc(100vh-72px)] border-r border-[#e0e2ef] px-5 py-7 lg:flex lg:flex-col">
         <nav className="space-y-1" aria-label="주요 메뉴"><SideLink icon={<Home/>} label="물건 찾기" active/><SideLink icon={<PenLine/>} label="내가 쓴 글"/><SideLink icon={<Lightbulb/>} label="내가 남긴 단서"/><SideLink icon={<Award/>} label="내 도움 포인트" count={`${rewardSummary.totalPoints}점`} onClick={()=>setProfileOpen(true)}/><SideLink icon={<Bell/>} label="알림" count="3" onClick={()=>setNoticeOpen(true)}/></nav>
-        <div className="my-6 h-px bg-[#e2e4f0]"/><p className="mb-2 px-3 text-xs font-bold tracking-wide text-muted-foreground">교사 메뉴</p>
-        <nav className="space-y-1"><SideLink icon={<PackageCheck/>} label="인수 대기" count={`${pendingHandoffs.filter(item=>!item.received).length}`} onClick={()=>setHandoffOpen(true)}/><SideLink icon={<ShieldCheck/>} label="포인트 관리" onClick={()=>setAdminOpen(true)}/></nav>
-        <div className="mt-auto rounded-[24px] bg-[#eef0ff] p-4 text-[#303b91]"><div className="mb-2 flex items-center gap-2 text-sm font-bold"><ShieldCheck className="size-4"/>교사 인증 완료</div><p className="text-xs leading-relaxed text-[#5961a1]">습득물을 확인하고 보관 장소를 안내할 수 있습니다.</p></div>
+        {(userRole==="teacher"||userRole==="final_admin")&&<><div className="my-6 h-px bg-[#e2e4f0]"/><p className="mb-2 px-3 text-xs font-bold tracking-wide text-muted-foreground">교사 메뉴</p><nav className="space-y-1"><SideLink icon={<PackageCheck/>} label="인수 대기" count={`${pendingHandoffs.filter(item=>!item.received).length}`} onClick={()=>setHandoffOpen(true)}/>{userRole==="final_admin"&&<SideLink icon={<ShieldCheck/>} label="포인트 관리" onClick={()=>setAdminOpen(true)}/>}</nav></>}
+        {userRole&&<div className="mt-auto rounded-[24px] bg-[#eef0ff] p-4 text-[#303b91]"><div className="mb-2 flex items-center gap-2 text-sm font-bold"><ShieldCheck className="size-4"/>{userRole==="final_admin"?"최종 관리자":userRole==="teacher"?"교사 인증 완료":"학생 계정"}</div><p className="text-xs leading-relaxed text-[#5961a1]">{userRole==="student"?"분실 신고와 습득물 등록, 찾기 단서를 이용할 수 있습니다.":"습득물을 확인하고 보관 장소를 안내할 수 있습니다."}</p></div>}
       </aside>
 
       <main className="min-w-0 px-4 pb-28 pt-6 sm:px-7 sm:pt-8 lg:px-9 lg:pb-12"><section className="mx-auto max-w-[880px]">
@@ -291,7 +342,23 @@ export default function LostFoundApp() {
 
     <Dialog open={adminOpen} onOpenChange={setAdminOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[30px] border-[#dfe2f1] sm:max-w-[700px]"><DialogHeader className="text-left"><DialogTitle className="flex items-center gap-2 text-2xl font-extrabold tracking-[-0.04em]"><ShieldCheck className="size-6 text-[#4a56ba]"/>도움 포인트 관리</DialogTitle><DialogDescription>지급 사유와 연결 항목을 확인하고 잘못된 지급을 취소합니다. 현재는 시연 데이터입니다.</DialogDescription></DialogHeader><div className="space-y-3">{rewards.map(transaction=><div key={transaction.id} className={`rounded-[20px] border p-4 ${transaction.status==="cancelled"?"border-[#dedfe6] bg-[#f5f5f7]":"border-[#ead89b] bg-[#fffdf5]"}`}><div className="flex flex-col gap-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-extrabold">{rewardReasonLabel(transaction.reason)} · +{transaction.points}점</p><Badge className={transaction.status==="active"?"border-0 bg-[#fff0ad] text-[#755400]":"border-0 bg-[#e2e2e7] text-[#666873]"}>{transaction.status==="active"?"지급됨":"취소됨"}</Badge></div><p className="mt-1 break-all text-xs text-muted-foreground">사용자 {transaction.userId} · 항목 {transaction.relatedItemId}{transaction.relatedClueId?` · 단서 ${transaction.relatedClueId}`:""}</p><p className="mt-1 text-xs text-muted-foreground">{transaction.grantedAt} · 처리: {transaction.grantedBy}{transaction.cancelledBy?` · 취소: ${transaction.cancelledBy}`:""}</p></div>{transaction.status==="active"&&<Button variant="outline" className="rounded-full border-[#d7a9a9] text-[#9a3e3e] hover:bg-[#fff0f0]" onClick={()=>cancelReward(transaction.id)}><RotateCcw className="size-4"/>지급 취소</Button>}</div></div>)}</div></DialogContent></Dialog>
 
-    <Dialog open={registerOpen} onOpenChange={setRegisterOpen}><DialogContent className="max-h-[90vh] overflow-y-auto rounded-[30px] border-[#dfe2f1] sm:max-w-[560px]"><DialogHeader className="text-left"><DialogTitle className="text-2xl font-extrabold tracking-[-0.04em]">물건 등록하기</DialogTitle><DialogDescription>{isFirebaseConfigured?"학교 계정으로 등록한 내용이 안전하게 저장됩니다.":"Firebase 설정 전에는 시연 목록에만 추가됩니다."}</DialogDescription></DialogHeader><div className="grid grid-cols-2 gap-2 rounded-[18px] bg-[#eff0f7] p-1.5"><button type="button" onClick={()=>setNewKind("lost")} className={`h-11 rounded-[14px] text-sm font-bold transition ${newKind==="lost"?"bg-white text-[#3544aa] shadow-sm":"text-muted-foreground"}`}>잃어버렸어요</button><button type="button" onClick={()=>setNewKind("found")} className={`h-11 rounded-[14px] text-sm font-bold transition ${newKind==="found"?"bg-white text-[#3544aa] shadow-sm":"text-muted-foreground"}`}>주인을 찾아요</button></div><form action={addDemoItem} className="space-y-4"><label className="block text-sm font-bold">물건 이름<Input required name="title" placeholder="예: 검정색 무선 이어폰" className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/></label><label className="block text-sm font-bold">마지막으로 본 장소<Input required name="location" placeholder="자유롭게 입력하세요" className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/></label><label className="block text-sm font-bold">특징<Textarea name="description" placeholder="색상, 모양, 눈에 띄는 특징을 적어주세요" className="mt-2 min-h-24 rounded-[16px] bg-[#f8f8fd]"/></label><button type="button" disabled className="flex h-24 w-full cursor-not-allowed items-center justify-center gap-2 rounded-[20px] border border-dashed border-[#aeb4da] bg-[#f7f7ff] text-sm font-bold text-[#777da8]"><ImagePlus className="size-5"/>사진 연결 준비 중</button><div className="rounded-[16px] bg-[#fff6d8] px-4 py-3 text-xs leading-relaxed text-[#66552a]">얼굴·이름표·전화번호가 보이지 않는지 확인해 주세요.</div><DialogFooter><DialogClose asChild><Button type="button" variant="outline" className="h-12 rounded-full">취소</Button></DialogClose><Button type="submit" className="h-12 rounded-full bg-[#4958c7] px-7 hover:bg-[#3847b5]">등록하기</Button></DialogFooter></form></DialogContent></Dialog>
+    <Dialog open={registerOpen} onOpenChange={changeRegisterOpen}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto rounded-[30px] border-[#dfe2f1] sm:max-w-[560px]">
+        <DialogHeader className="text-left"><DialogTitle className="text-2xl font-extrabold tracking-[-0.04em]">물건 등록하기</DialogTitle><DialogDescription>{isFirebaseConfigured?"학교 계정으로 등록한 내용과 사진이 안전하게 저장됩니다.":"Firebase 설정 전에는 시연 목록에만 추가됩니다."}</DialogDescription></DialogHeader>
+        <div className="grid grid-cols-2 gap-2 rounded-[18px] bg-[#eff0f7] p-1.5"><button type="button" onClick={()=>setNewKind("lost")} className={`h-11 rounded-[14px] text-sm font-bold transition ${newKind==="lost"?"bg-white text-[#3544aa] shadow-sm":"text-muted-foreground"}`}>잃어버렸어요</button><button type="button" onClick={()=>setNewKind("found")} className={`h-11 rounded-[14px] text-sm font-bold transition ${newKind==="found"?"bg-white text-[#3544aa] shadow-sm":"text-muted-foreground"}`}>주인을 찾아요</button></div>
+        <form action={addDemoItem} className="space-y-4">
+          <label className="block text-sm font-bold">물건 이름<Input required name="title" placeholder="예: 검정색 무선 이어폰" className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/></label>
+          <label className="block text-sm font-bold">마지막으로 본 장소<Input required name="location" placeholder="자유롭게 입력하세요" className="mt-2 h-12 rounded-[16px] bg-[#f8f8fd]"/></label>
+          <label className="block text-sm font-bold">특징<Textarea name="description" placeholder="색상, 모양, 눈에 띄는 특징을 적어주세요" className="mt-2 min-h-24 rounded-[16px] bg-[#f8f8fd]"/></label>
+          <div className="rounded-[20px] border border-dashed border-[#aeb4da] bg-[#f7f7ff] p-3">
+            {photoPreview?<div className="relative h-48 overflow-hidden rounded-[16px]"><Image unoptimized fill sizes="(max-width: 640px) 90vw, 520px" src={photoPreview} alt="선택한 사진 미리보기" className="object-cover"/><button type="button" onClick={clearPhoto} className="absolute right-2 top-2 z-10 grid size-10 place-items-center rounded-full bg-[#202557]/85 text-white shadow-lg" aria-label="선택한 사진 삭제"><X className="size-5"/></button></div>:<div className="grid min-h-28 place-items-center text-center text-[#686f9e]"><div>{photoBusy?<LoaderCircle className="mx-auto size-7 animate-spin"/>:<ImagePlus className="mx-auto size-7"/>}<p className="mt-2 text-sm font-bold">물건 사진을 추가해 주세요</p><p className="mt-1 text-xs">등록 전에 화면에서 확인할 수 있어요</p></div></div>}
+            <div className="mt-3 grid grid-cols-2 gap-2"><label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-full border border-[#c9cde5] bg-white text-sm font-bold text-[#4652ad] hover:bg-[#eef0ff]"><ImagePlus className="size-4"/>사진 업로드<input type="file" accept="image/*" className="sr-only" disabled={photoBusy||registerBusy} onChange={handlePhotoSelected}/></label><label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-[#4958c7] text-sm font-bold text-white hover:bg-[#3847b5]"><Camera className="size-4"/>바로 촬영<input type="file" accept="image/*" capture="environment" className="sr-only" disabled={photoBusy||registerBusy} onChange={handlePhotoSelected}/></label></div>
+          </div>
+          <div className="rounded-[16px] bg-[#fff6d8] px-4 py-3 text-xs leading-relaxed text-[#66552a]">얼굴·이름표·학생증·전화번호가 보이지 않는지 확인해 주세요. 사진은 업로드 전에 자동으로 적당한 크기로 줄어듭니다.</div>
+          <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={registerBusy} className="h-12 rounded-full">취소</Button></DialogClose><Button type="submit" disabled={registerBusy||photoBusy} className="h-12 rounded-full bg-[#4958c7] px-7 hover:bg-[#3847b5]">{registerBusy?<><LoaderCircle className="size-4 animate-spin"/>사진 저장 중</>:"등록하기"}</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
 
     <Dialog open={noticeOpen} onOpenChange={setNoticeOpen}><DialogContent className="rounded-[30px] border-[#dfe2f1] sm:max-w-[500px]"><DialogHeader className="text-left"><DialogTitle className="text-2xl font-extrabold tracking-[-0.04em]">알림</DialogTitle><DialogDescription>내 글과 관련된 새 소식입니다.</DialogDescription></DialogHeader><div className="space-y-2"><Notice icon={<Award/>} title="도움 포인트 3점을 받았어요" text="습득물을 선생님께 전달한 활동이 확인되었습니다." tone="reward"/><Notice icon={<Lightbulb/>} title="새로운 찾기 단서가 도착했어요" text="검정색 무선 이어폰 · 도서관 반납대 근처"/><Notice icon={<PackageCheck/>} title="습득물을 선생님이 인수했어요" text="회색 체육복 상의 · 체육교무실 보관"/><Notice icon={<Eye/>} title="비슷한 습득물이 등록되었어요" text="은색 보온 물병과 색상·장소가 비슷해요"/></div></DialogContent></Dialog>
     {toast&&<div role="status" className="fixed bottom-24 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full bg-[#202557] px-5 py-3 text-sm font-bold text-white shadow-xl lg:bottom-8"><Check className="size-4"/>{toast}</div>}
@@ -301,7 +368,7 @@ export default function LostFoundApp() {
 function SideLink({icon,label,active,count,onClick}:{icon:React.ReactNode;label:string;active?:boolean;count?:string;onClick?:()=>void}){return <button onClick={onClick} className={`flex h-12 w-full items-center gap-3 rounded-[16px] px-3 text-sm font-bold transition ${active?"bg-[#e0e3ff] text-[#3544aa]":"text-[#55586b] hover:bg-[#f0f1f8]"}`}><span className="[&>svg]:size-[19px]">{icon}</span><span>{label}</span>{count&&<span className={`ml-auto grid min-w-5 place-items-center rounded-full px-1.5 py-0.5 text-[10px] ${label.includes("포인트")?"bg-[#ffe17c] text-[#634900]":"bg-[#e33f65] text-white"}`}>{count}</span>}</button>}
 function MobileLink({icon,label,active,onClick}:{icon:React.ReactNode;label:string;active?:boolean;onClick?:()=>void}){return <button onClick={onClick} className={`flex flex-col items-center justify-center gap-1 text-[11px] font-bold ${active?"text-[#4251b8]":"text-[#73768a]"}`}><span className={`grid h-8 w-14 place-items-center rounded-full [&>svg]:size-5 ${active?"bg-[#e0e3ff]":""}`}>{icon}</span>{label}</button>}
 function FilterChip({active,onClick,children}:{active?:boolean;onClick?:()=>void;children:React.ReactNode}){return <button onClick={onClick} className={`h-10 shrink-0 rounded-full border px-4 text-sm font-bold transition ${active?"border-[#4958c7] bg-[#4958c7] text-white shadow-[0_5px_13px_rgba(73,88,199,.18)]":"border-[#d5d8e8] bg-white text-[#55586c] hover:border-[#929ad1] hover:bg-[#f6f6ff]"}`}>{children}</button>}
-function ItemCard({item,onClick}:{item:Item;onClick:()=>void}){return <button onClick={onClick} className="item-card group text-left"><div className={`item-visual bg-gradient-to-br ${tones[item.tone]}`}><PackageOpen className="size-14 stroke-[1.25] opacity-75 transition-transform duration-300 group-hover:-rotate-3 group-hover:scale-105"/><span className="absolute left-3 top-3 rounded-full bg-white/75 px-2.5 py-1 text-[11px] font-extrabold backdrop-blur-sm">{item.kind==="lost"?"분실":"습득"}</span></div><div className="min-w-0 flex-1 py-0.5"><div className="flex items-start justify-between gap-2"><h3 className="line-clamp-1 text-[16px] font-extrabold tracking-[-0.025em]">{item.title}</h3><ChevronRight className="mt-0.5 size-4 shrink-0 text-[#9b9fb3] transition-transform group-hover:translate-x-0.5"/></div><p className="mt-2 flex items-center gap-1.5 text-[13px] text-[#666a7c]"><MapPin className="size-3.5 shrink-0"/><span className="line-clamp-1">{item.location}</span></p><p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-[#666a7c]"><Clock3 className="size-3.5 shrink-0"/>{item.date}</p><div className="mt-3 flex items-center justify-between gap-2"><StatusBadge item={item}/>{item.clueCount>0&&<span className="flex items-center gap-1 text-xs font-bold text-[#a66b00]"><Lightbulb className="size-3.5"/>단서 {item.clueCount}</span>}</div></div></button>}
+function ItemCard({item,onClick}:{item:Item;onClick:()=>void}){return <button onClick={onClick} className="item-card group text-left"><div className={`item-visual bg-gradient-to-br ${tones[item.tone]}`}>{item.imageUrl?<Image unoptimized fill sizes="(max-width: 640px) 34vw, 176px" src={item.imageUrl} alt="" className="object-cover transition-transform duration-300 group-hover:scale-105"/>:<PackageOpen className="size-14 stroke-[1.25] opacity-75 transition-transform duration-300 group-hover:-rotate-3 group-hover:scale-105"/>}<span className="absolute left-3 top-3 z-10 rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-extrabold backdrop-blur-sm">{item.kind==="lost"?"분실":"습득"}</span></div><div className="min-w-0 flex-1 py-0.5"><div className="flex items-start justify-between gap-2"><h3 className="line-clamp-1 text-[16px] font-extrabold tracking-[-0.025em]">{item.title}</h3><ChevronRight className="mt-0.5 size-4 shrink-0 text-[#9b9fb3] transition-transform group-hover:translate-x-0.5"/></div><p className="mt-2 flex items-center gap-1.5 text-[13px] text-[#666a7c]"><MapPin className="size-3.5 shrink-0"/><span className="line-clamp-1">{item.location}</span></p><p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-[#666a7c]"><Clock3 className="size-3.5 shrink-0"/>{item.date}</p><div className="mt-3 flex items-center justify-between gap-2"><StatusBadge item={item}/>{item.clueCount>0&&<span className="flex items-center gap-1 text-xs font-bold text-[#a66b00]"><Lightbulb className="size-3.5"/>단서 {item.clueCount}</span>}</div></div></button>}
 function StatusBadge({item}:{item:Item}){return <Badge className={`border-0 px-2.5 py-1 ${item.kind==="lost"?"bg-[#eeeaff] text-[#5146a8]":"bg-[#daf4eb] text-[#17624c]"}`}>{item.status}</Badge>}
 function ClueCard({title,text,time}:{title:string;text:string;time:string}){return <button className="w-full rounded-[20px] border border-[#e1e3f0] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#bec3e5] hover:shadow-[0_8px_20px_rgba(40,45,90,.07)]"><div className="mb-2 flex items-center justify-between gap-2"><p className="line-clamp-1 text-sm font-extrabold">{title}</p><span className="shrink-0 text-[11px] text-muted-foreground">{time}</span></div><p className="line-clamp-2 text-xs leading-relaxed text-[#6d7083]">{text}</p></button>}
 function InfoRow({icon,label,value}:{icon:React.ReactNode;label:string;value:string}){return <div className="grid grid-cols-[20px_44px_1fr] items-start gap-2"><span className="pt-0.5 text-[#5963af] [&>svg]:size-4">{icon}</span><span className="font-bold text-[#696c7e]">{label}</span><span className="font-medium text-[#303344]">{value}</span></div>}

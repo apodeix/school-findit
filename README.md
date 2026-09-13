@@ -28,18 +28,20 @@
 - `도움 됐어요`, 교사 인수 확인 및 관리자 지급 취소 시연
 - Firebase Google 로그인 기반 코드
 - Firestore 물건 등록과 공개 목록 실시간 조회 기반
+- 사진 업로드·카메라 촬영·미리보기·자동 축소 및 Storage 연결 코드
+- 로그인 계정 역할에 따른 학생·교사·최종 관리자 메뉴 구분
 
 Firebase 프로젝트 `school-findit`에는 서울 리전 Firestore 데이터베이스가
 생성되어 있으며 삭제 보호가 적용되어 있습니다. 학교 도메인 또는 허용 계정
 설정이 끝나기 전에는 보안 규칙이 데이터 접근을 차단합니다.
 
-현재는 Firebase 프로젝트 소유자 Google 계정 한 개만 임시 허용하며, 처음
-로그인할 때 최종 관리자 프로필을 생성하도록 보안 규칙으로 제한합니다. 학교
-도메인이 확정되면 임시 허용 설정을 학교 계정 정책으로 교체해야 합니다.
+현재는 여러 역할 시험을 위해 이메일이 확인된 Gmail 계정을 임시 허용합니다.
+최초 지정 계정은 최종 관리자로, 나머지 새 계정은 학생으로 생성됩니다. 학교
+도메인이 확정되면 Gmail 임시 허용 규칙을 학교 계정 정책으로 교체해야 합니다.
 
 아직 실제 운영 기능으로 연결되지 않은 항목도 있습니다.
 
-- 사진 업로드와 개인정보 가림 확인
+- Storage 버킷 생성과 사진 업로드 보안 규칙 배포
 - 찾기 단서 작성·수정·삭제
 - 교사 인증코드와 역할 변경
 - 교사의 습득물 인수·반환 처리
@@ -112,10 +114,10 @@ corepack pnpm firebase deploy --only firestore:rules,firestore:indexes
 
 ## Vercel 배포
 
-Vinext 앱은 Vercel 환경에서 Nitro 어댑터로 빌드합니다. `vercel.json`에 빌드
-명령이 포함되어 있으며, Vercel 프로젝트의 Environment Variables에 위 Firebase
-환경변수를 Production, Preview, Development 환경별로 등록해야 합니다. 로컬
-`.env.local` 파일은 보안을 위해 GitHub와 Vercel에 자동 전송되지 않습니다.
+Vinext 앱은 Vercel에서 정적 웹앱으로 빌드합니다. `vercel.json`에 빌드 명령과
+`dist/client` 출력 경로가 포함되어 있습니다. Vercel 프로젝트의 Environment
+Variables에 위 Firebase 환경변수를 Production, Preview, Development 환경별로
+등록해야 합니다. 로컬 `.env.local` 파일은 보안을 위해 GitHub에 올리지 않습니다.
 
 ## 검사 명령
 
