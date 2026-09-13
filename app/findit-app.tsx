@@ -601,6 +601,14 @@ export default function FinditApp() {
                             {l}
                           </Button>
                         ))}
+                        <Button
+                          variant={recent ? "default" : "outline"}
+                          aria-pressed={recent}
+                          className="rounded-full"
+                          onClick={() => setRecent((value) => !value)}
+                        >
+                          최근 7일
+                        </Button>
                       </div>
                       <details className={`${panel} !p-4`}>
                         <summary className="cursor-pointer text-sm font-bold">
@@ -641,14 +649,6 @@ export default function FinditApp() {
                               onChange={(e) => setDate(e.target.value)}
                             />
                           </Field>
-                          <label className="flex min-h-11 items-center gap-2 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={recent}
-                              onChange={(e) => setRecent(e.target.checked)}
-                            />
-                            최근 7일
-                          </label>
                           <label className="flex min-h-11 items-center gap-2 text-sm">
                             <input
                               type="checkbox"

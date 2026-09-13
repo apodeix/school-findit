@@ -35,7 +35,7 @@ const examples = [
   { id: "demo-uniform", kind: "found", title: "회색 체육복 상의", location: "체육관 무대 옆", description: "이름표는 가려서 확인해 주세요.", status: "교사 인수", storage: "체육 교무실" },
   { id: "demo-umbrella", kind: "found", title: "남색 우산", location: "1층 우산꽂이", description: "손잡이에 작은 스티커가 있어요.", status: "주인 찾는 중", storage: "1층 교무실" },
   { id: "demo-case", kind: "lost", title: "투명 카드 케이스", location: "운동장 스탠드", description: "파란 목걸이 줄이 달린 케이스예요. 카드 개인정보는 공개하지 않아요.", status: "찾는 중" },
-];
+].map((item, index) => ({ ...item, daysAgo: [0, 1, 3, 6, 8, 12][index] }));
 export function DemoPreview({
   onLogin,
   disabled,
@@ -49,10 +49,12 @@ export function DemoPreview({
   useEffect(() => { if (searchFocus) { search.current?.scrollIntoView({ block: "center" }); search.current?.focus({ preventScroll: true }); } }, [searchFocus]);
   const [query, setQuery] = useState(""),
     [kind, setKind] = useState("all"),
+    [recent, setRecent] = useState(false),
     [selected, setSelected] = useState<(typeof examples)[number] | null>(null);
   const rows = examples.filter(
     (i) =>
       (kind === "all" || i.kind === kind) &&
+      (!recent || i.daysAgo < 7) &&
       `${i.title} ${i.location}`.includes(query.trim()),
   );
   return (
@@ -93,6 +95,14 @@ export function DemoPreview({
             {label}
           </Button>
         ))}
+        <Button
+          variant={recent ? "default" : "outline"}
+          aria-pressed={recent}
+          className="rounded-full"
+          onClick={() => setRecent((value) => !value)}
+        >
+          최근 7일
+        </Button>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         {rows.map((i) => (
@@ -108,7 +118,7 @@ export function DemoPreview({
             </div>
             <div className="min-w-0">
               <p className="text-sm text-muted-foreground">
-                예시 · {i.kind === "lost" ? "분실 신고" : "습득물"}
+                예시 · {i.kind === "lost" ? "분실 신고" : "습득물"} · {i.daysAgo === 0 ? "오늘" : `${i.daysAgo}일 전`}
               </p>
               <h2 className="mt-1 font-extrabold">{i.title}</h2>
               <p className="my-2 flex items-center gap-1 text-sm text-muted-foreground">
