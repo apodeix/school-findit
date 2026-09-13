@@ -1,5 +1,5 @@
 "use client";
-import { DemoPreview } from "./demo-preview";
+import { WORKSHOP_GUEST_ACCESS } from "@/lib/workshop";
 import { BrandMark } from "@/components/brand-mark";
 function MobileTab({ icon, label, active, onClick }: { icon: ReactNode; label: string; active?: boolean; onClick: () => void }) {
   return <button onClick={onClick} aria-current={active ? "page" : undefined} className={`flex flex-col items-center justify-center gap-1 text-sm font-bold ${active ? "text-[#4251b8]" : "text-[#73768a]"}`}><span className={`grid h-8 w-14 place-items-center rounded-full [&>svg]:size-5 ${active ? "bg-[#e0e3ff]" : ""}`}>{icon}</span>{label}</button>;
@@ -35,6 +35,7 @@ import {
   onAuthStateChanged,
   setPersistence,
   signInWithPopup,
+  signInAnonymously,
   signOut,
   type User,
 } from "firebase/auth";
@@ -207,13 +208,21 @@ export default function FinditApp() {
       setSearchMode(false);
       setError("");
       if (!current) {
-        setLoading(false);
+        setLoading(WORKSHOP_GUEST_ACCESS);
         setSection("all");
+        if (WORKSHOP_GUEST_ACCESS) {
+          void setPersistence(auth, browserSessionPersistence)
+            .then(async () => { if (!auth.currentUser) await signInAnonymously(auth); })
+            .catch(() => {
+              setError("학생 화면에 연결하지 못했습니다. 새로고침해 주세요.");
+              setLoading(false);
+            });
+        }
         return;
       }
       setLoading(true);
       void refresh();
-      revision = onSnapshot(
+      if (!current.isAnonymous) revision = onSnapshot(
         doc(db, "app_settings", "revision"),
         () => void refresh(),
         () => {
@@ -223,7 +232,7 @@ export default function FinditApp() {
     });
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") void refresh();
-    }, 60000);
+    }, WORKSHOP_GUEST_ACCESS ? 10000 : 60000);
     const focus = () => void refresh();
     window.addEventListener("focus", focus);
     return () => {
@@ -369,6 +378,7 @@ export default function FinditApp() {
     setPrompt({ title, action, input, field, initial, label, description });
   }
   function codeDialog() {
+    if (user?.isAnonymous) { void login(); return; }
     setPrompt({
       title: admin ? "교사 인증코드 변경" : "교사 인증",
       description: admin
@@ -456,7 +466,7 @@ export default function FinditApp() {
                     </span>
                   )}
                 </Button>
-                <Button
+                {!user.isAnonymous && <Button
                   variant="ghost"
                   className="rounded-full"
                   onClick={logout}
@@ -464,7 +474,7 @@ export default function FinditApp() {
                 >
                   <LogOut />
                   <span className="hidden sm:inline">로그아웃</span>
-                </Button>
+                </Button>}
               </>
             ) : (
               <Button
@@ -519,11 +529,10 @@ export default function FinditApp() {
         </aside>
         <main className="min-w-0 space-y-5 px-4 pb-28 pt-6 sm:px-7 sm:pt-8 lg:px-9 lg:pb-12">
           {!user ? (
-            <DemoPreview
-              onLogin={login}
-              disabled={busy || !isFirebaseConfigured}
-              searchFocus={searchMode ? searchFocus : 0}
-            />
+            <div className={panel}>
+              <p role="status">{error || (loading ? "학생 화면을 준비하고 있어요…" : "Google 계정으로 로그인해 주세요.")}</p>
+              {!loading && <Button className="mt-4 rounded-full" onClick={login}>Google 로그인</Button>}
+            </div>
           ) : (
             <>
               {error && (
@@ -726,7 +735,7 @@ export default function FinditApp() {
                       description="본인의 활동과 계정 설정을 확인하세요."
                     >
                       <div className={panel}>
-                        <p className="break-all font-bold">{user.email}</p>
+                        <p className="break-all font-bold">{user.isAnonymous ? "연수용 학생" : user.email}</p>
                         <p className="mt-2 text-sm">
                           {roleLabels[data.role]} · 이 계정 정보는 본인에게만
                           표시됩니다.
@@ -753,7 +762,7 @@ export default function FinditApp() {
                               onClick={codeDialog}
                             >
                               <KeyRound />
-                              {admin ? "교사 인증코드 설정" : "교사 인증"}
+                              {admin ? "교사 인증코드 설정" : user.isAnonymous ? "교사 Google 로그인" : "교사 인증"}
                             </Button>
                           )}
                           {teacher && (
@@ -774,14 +783,8 @@ export default function FinditApp() {
                               </Button>
                             </>
                           )}
-                          <Button
-                            variant="outline"
-                            className="rounded-full"
-                            onClick={logout}
-                          >
-                            <LogOut />
-                            로그아웃
-                          </Button>
+                          {!user.isAnonymous && <Button variant="outline" className="rounded-full" onClick={logout}><LogOut />로그아웃</Button>}
+                          {user.isAnonymous && <p className="text-sm leading-6 text-muted-foreground">연수용 학생 계정입니다. 작성한 내용은 실제 저장됩니다. 탭을 닫거나 교사 계정으로 전환하면 이전 학생 글의 수정 권한을 잃을 수 있습니다.</p>}
                         </div>
                       </div>
                       <div className="rounded-[28px] border border-[#e6cd77] bg-[#fff7d9] p-6">

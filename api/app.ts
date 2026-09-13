@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { WORKSHOP_GUEST_ACCESS } from "../lib/workshop.js";
 import { hashTeacherCode, matchesTeacherCode, newTeacherCode } from "../lib/server/teacher-code.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
@@ -122,14 +123,16 @@ async function authenticate(token: string): Promise<Actor> {
   } catch {
     throw new AppError("로그인이 만료됐습니다. 다시 로그인해 주세요.", 401);
   }
+  const anonymous = claims.firebase.sign_in_provider === "anonymous";
   requireThat(
+    (WORKSHOP_GUEST_ACCESS && anonymous) || (
     claims.email_verified &&
       claims.email &&
-      claims.firebase.sign_in_provider === "google.com",
+      claims.firebase.sign_in_provider === "google.com"),
     "확인된 Google 계정으로 로그인해 주세요.",
     403,
   );
-  const email = claims.email.toLowerCase();
+  const email = claims.email?.toLowerCase() || "";
   return db.runTransaction(async (tx) => {
     const settings =
       (await tx.get(db.doc("app_settings/security"))).data() || {};
@@ -144,7 +147,7 @@ async function authenticate(token: string): Promise<Actor> {
       /* deny invalid policy */
     }
     requireThat(
-      matches ||
+      (WORKSHOP_GUEST_ACCESS && anonymous) || matches ||
         (settings.allowGmailTesting !== false && email.endsWith("@gmail.com")),
       "허용된 학교 Google 계정으로 로그인해 주세요.",
       403,
@@ -157,6 +160,10 @@ async function authenticate(token: string): Promise<Actor> {
       403,
     );
     let role = roleOf(user.data()?.role);
+    if (anonymous) {
+      if (!user.exists) tx.create(userRef, { email: "", role: "student", anonymous: true, active: true, createdAt: now() });
+      return { uid: claims.uid, email: "", role: "student", anonymous: true };
+    }
     if (!user.exists) {
       role =
         String(settings.initialAdminEmail || "").toLowerCase() === email
@@ -179,7 +186,7 @@ async function authenticate(token: string): Promise<Actor> {
 async function freshActor(tx: Transaction, actor: Actor) {
   const data = (await tx.get(database().doc(`users/${actor.uid}`))).data();
   requireThat(data && data.active !== false, "계정을 다시 확인해 주세요.");
-  return { ...actor, role: roleOf(data.role) };
+  return { ...actor, role: data.anonymous === true ? "student" as const : roleOf(data.role) };
 }
 const itemFields = [
   "kind",
@@ -433,6 +440,7 @@ export async function dispatch(
     };
   }
   if (action === "teacher.verify" || action === "teacher.code") {
+    requireThat(Boolean(actor.email), "교사 인증은 Google 계정으로 로그인한 뒤 이용해 주세요.");
     const code = z
       .string()
       .trim()
